@@ -307,7 +307,8 @@ async function handleVerifyButton(interaction) {
     interaction.client,
     campaign,
     interaction.user.id,
-    interaction.user.username
+    interaction.user.username,
+    interaction.guildId
   );
 
   if (alreadyVerified) {

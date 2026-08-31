@@ -201,17 +201,30 @@ module.exports = {
     }
 
     if (sub === 'stats') {
-      const [eligibleCount, totalAttempts] = await Promise.all([
+      const [eligibleCount, totalAttempts, sourceCounts] = await Promise.all([
         prisma.campaignMember.count({ where: { campaignId: campaign.id, eligible: true } }),
         prisma.campaignMember.count({ where: { campaignId: campaign.id } }),
+        prisma.campaignMember.groupBy({
+          by: ['sourceGuildId'],
+          where: { campaignId: campaign.id, eligible: true },
+          _count: { _all: true },
+        }),
       ]);
+
+      const crossoverLines = campaign.requiredServers
+        .map((server) => {
+          const match = sourceCounts.find((row) => row.sourceGuildId === server.guildId);
+          return `• From **${server.name}** → joined the rest: ${match?._count._all || 0}`;
+        })
+        .join('\n');
 
       await interaction.reply({
         content:
           `📊 **${campaign.name}** statistics\n\n` +
           `Verification Activity: ${campaign.verificationActivityCount}\n` +
           `Unique members who attempted: ${totalAttempts}\n` +
-          `Currently Eligible: ${eligibleCount}`,
+          `Currently Eligible: ${eligibleCount}\n\n` +
+          `**🔀 Crossover by source** (which embed drove the verification):\n${crossoverLines}`,
         ephemeral: true,
       });
       return;

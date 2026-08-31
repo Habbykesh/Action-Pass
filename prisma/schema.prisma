@@ -103,6 +103,11 @@ model CampaignMember {
   userId           String
   lastKnownUsername String?
 
+  // The guild whose Verify embed this member first clicked — an
+  // attribution signal for which partner community actually drove the
+  // crossover, not a claim about which server they "belong to."
+  sourceGuildId String?
+
   // JSON map of guildId -> boolean membership status from the last check.
   serverStatus Json @default("{}")
 

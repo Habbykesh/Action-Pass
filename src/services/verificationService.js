@@ -30,7 +30,7 @@ async function checkMembership(client, campaign, userId) {
  * Handles a single verification attempt (the "Verify Membership"
  * button). Returns { alreadyVerified, allPresent, statusMap }.
  */
-async function handleVerificationAttempt(client, campaign, userId, username) {
+async function handleVerificationAttempt(client, campaign, userId, username, sourceGuildId) {
   const existing = await prisma.campaignMember.findUnique({
     where: { campaignId_userId: { campaignId: campaign.id, userId } },
   });
@@ -50,6 +50,9 @@ async function handleVerificationAttempt(client, campaign, userId, username) {
       eligible: allPresent,
       lastCheckedAt: now,
       firstVerifiedAt: allPresent ? existing?.firstVerifiedAt || now : existing?.firstVerifiedAt || null,
+      // Attribution is locked in on the very first click and never
+      // overwritten by later re-verifications from a different server.
+      sourceGuildId: existing?.sourceGuildId || sourceGuildId,
     },
     create: {
       campaignId: campaign.id,
@@ -59,6 +62,7 @@ async function handleVerificationAttempt(client, campaign, userId, username) {
       eligible: allPresent,
       lastCheckedAt: now,
       firstVerifiedAt: allPresent ? now : null,
+      sourceGuildId,
     },
   });
 

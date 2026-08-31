@@ -12,16 +12,20 @@ const FIELDS = [
   { label: 'Verification Date/Time', key: 'verifiedAtDisplay' },
   { label: 'Membership Status', key: 'membershipStatusDisplay' },
   { label: 'Eligibility Status', key: 'eligibilityDisplay' },
+  { label: 'Joined From', key: 'sourceServerName' },
   { label: 'Campaign', key: 'campaignName' },
 ];
 
 function buildRows(campaign, members) {
+  const serverNameByGuildId = new Map(campaign.requiredServers.map((s) => [s.guildId, s.name]));
+
   return members.map((m) => ({
     lastKnownUsername: m.lastKnownUsername || 'unknown',
     userId: m.userId,
     verifiedAtDisplay: m.firstVerifiedAt ? m.firstVerifiedAt.toISOString() : 'Never',
     membershipStatusDisplay: m.eligible ? 'Member of all required servers' : 'Missing one or more servers',
     eligibilityDisplay: m.eligible ? 'Eligible' : 'Not eligible',
+    sourceServerName: serverNameByGuildId.get(m.sourceGuildId) || 'Unknown',
     campaignName: campaign.name,
   }));
 }
