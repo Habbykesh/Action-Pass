@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CampaignStatus {
+  active
+  ended
+  archived
+}
+
+// One row, singleton. Bot-wide settings.
+model BotSettings {
+  id                 Int     @id @default(1)
+  globalPartnerAccess Boolean @default(false)
+}
+
+// Per-Discord-server configuration: single log channel + explicit
+// campaign-access override.
+model GuildConfig {
+  id             Int      @id @default(autoincrement())
+  guildId        String   @unique
+  guildName      String?
+  logChannelId   String?
+  campaignAccess Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  name            String
+  ownerGuildId    String
+  createdByUserId String
+
+  roleServerId    String
+  roleId          String
+  roleName        String
+  roleAutoCreated Boolean  @default(true)
+
+  startAt    DateTime
+  deadlineAt DateTime
+
+  status CampaignStatus @default(active)
+
+  verificationActivityCount Int @default(0)
+
+  endedAt        DateTime?
+  endedByUserId  String?
+  archivedAt     DateTime?
+
+  requiredServers RequiredServer[]
+  postedEmbeds    PostedEmbed[]
+  members         CampaignMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerGuildId, status])
+}
+
+// One row per server required by a campaign (min 2 per campaign,
+// enforced in application code).
+model RequiredServer {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  guildId    String
+  name       String
+  inviteLink String
+
+  @@index([campaignId])
+  @@index([guildId])
+}
+
+// One row per verification embed message posted into a participating
+// server, so it can be edited/reposted/tracked later.
+model PostedEmbed {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  guildId   String
+  channelId String
+  messageId String
+
+  @@index([campaignId])
+}
+
+// Per-user eligibility record for a given campaign. Discord User ID is
+// the durable identifier; username is a display snapshot only, since
+// usernames can change.
+model CampaignMember {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  userId           String
+  lastKnownUsername String?
+
+  // JSON map of guildId -> boolean membership status from the last check.
+  serverStatus Json @default("{}")
+
+  eligible       Boolean @default(false)
+  roleAssigned   Boolean @default(false)
+
+  firstVerifiedAt DateTime?
+  lastCheckedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([campaignId, userId])
+  @@index([campaignId, eligible])
+}

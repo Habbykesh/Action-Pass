@@ -1,0 +1,29 @@
+{
+  "name": "actionfi-partnership-bot",
+  "version": "1.0.0",
+  "description": "ActionFi Partnership Verification Bot - cross-server membership verification, campaign management, and eligibility reporting.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy-commands": "node src/deploy-commands.js",
+    "postinstall": "prisma generate",
+    "migrate": "prisma migrate deploy",
+    "migrate:dev": "prisma migrate dev"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.15.3",
+    "@prisma/client": "^5.18.0",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.15.0",
+    "json2csv": "^6.0.0-alpha.2",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.18.0"
+  }
+}
