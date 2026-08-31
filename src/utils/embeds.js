@@ -1,32 +1,38 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
-const COLOR = 0x5865f2;
+const COLOR = 0x8b5cf6; // violet — matches the ActionFi brand mark
 const COLOR_SUCCESS = 0x57f287;
 const COLOR_FAIL = 0xed4245;
 const COLOR_LOG = 0x99aab5;
+const BRAND_FOOTER = 'ActionFi Partnerships';
 
-function verificationEmbed(campaign) {
+function verificationEmbed(campaign, iconUrl) {
   const serverLines = campaign.requiredServers
     .map((s) => `🔹 [${s.name}](${s.inviteLink})`)
     .join('\n');
 
   const embed = new EmbedBuilder()
     .setColor(COLOR)
-    .setTitle(`🤝 ${campaign.name}`)
-    .setDescription(
-      'Campaign Verification\n\n' +
-        'You must be a member of all the communities below to participate.\n\n' +
-        serverLines +
-        '\n\nOnce you\u2019ve joined all required communities, click below.'
+    .setAuthor({ name: 'Campaign Verification' })
+    .setTitle(`🤝  ${campaign.name}`)
+    .setDescription('You must be a member of **all** the communities below to participate in this campaign.')
+    .addFields(
+      { name: '📋  Required Communities', value: serverLines },
+      {
+        name: '🕒  Verification Window',
+        value: `${campaign.startAt.toDateString()} → **${campaign.deadlineAt.toDateString()}**`,
+      }
     )
-    .setFooter({
-      text: `Verification open until ${campaign.deadlineAt.toDateString()}`,
-    });
+    .setFooter({ text: `${BRAND_FOOTER} • Closes ${campaign.deadlineAt.toDateString()}` })
+    .setTimestamp();
+
+  if (iconUrl) embed.setThumbnail(iconUrl);
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`verify_${campaign._id}`)
-      .setLabel('🔐 Verify Membership')
+      .setCustomId(`verify_${campaign.id}`)
+      .setLabel('Verify Membership')
+      .setEmoji('🔐')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -36,27 +42,32 @@ function verificationEmbed(campaign) {
 function eligibleEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR_SUCCESS)
-    .setDescription('✅ You\u2019re already verified!\n\nYou are a member of all required communities and are eligible for this campaign.');
+    .setTitle('✅  You\u2019re already verified!')
+    .setDescription('You are a member of all required communities and are eligible for this campaign.')
+    .setFooter({ text: BRAND_FOOTER });
 }
 
 function successEmbed(campaign) {
   return new EmbedBuilder()
     .setColor(COLOR_SUCCESS)
-    .setTitle('✅ Verified!')
-    .setDescription(
-      `You now belong to all required communities for **${campaign.name}** and have been marked eligible.`
-    );
+    .setTitle('✅  Verified!')
+    .setDescription(`You now belong to all required communities for **${campaign.name}**.`)
+    .addFields({ name: '🎖️  Role Assigned', value: campaign.roleName })
+    .setFooter({ text: BRAND_FOOTER })
+    .setTimestamp();
 }
 
 function missingServersEmbed(campaign, statusMap) {
   const lines = campaign.requiredServers
-    .map((s) => `${statusMap[s.guildId] ? '✅' : '❌'} [${s.name}](${s.inviteLink})`)
+    .map((s) => `${statusMap[s.guildId] ? '✅' : '❌'}  [${s.name}](${s.inviteLink})`)
     .join('\n');
 
   return new EmbedBuilder()
     .setColor(COLOR_FAIL)
-    .setTitle('❌ You\u2019re not eligible yet')
-    .setDescription(`${lines}\n\nJoin the missing communities above, then click Verify Membership again.`);
+    .setTitle('❌  You\u2019re not eligible yet')
+    .addFields({ name: 'Community Status', value: lines })
+    .setDescription('Join the missing communities above, then tap **Verify Membership** again.')
+    .setFooter({ text: BRAND_FOOTER });
 }
 
 function campaignNotActiveEmbed(campaign) {
@@ -69,14 +80,19 @@ function campaignNotActiveEmbed(campaign) {
   } else if (now > campaign.deadlineAt) {
     reason = `This campaign\u2019s verification deadline (${campaign.deadlineAt.toUTCString()}) has passed.`;
   }
-  return new EmbedBuilder().setColor(COLOR_FAIL).setDescription(`🔒 ${reason}`);
+  return new EmbedBuilder()
+    .setColor(COLOR_FAIL)
+    .setTitle('🔒  Verification Closed')
+    .setDescription(reason)
+    .setFooter({ text: BRAND_FOOTER });
 }
 
 function accessDeniedEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR_FAIL)
-    .setTitle('🔒 Access Required')
-    .setDescription('You don\u2019t currently have permission to create campaigns with this bot.\n\nPlease contact the bot developer to request access.');
+    .setTitle('🔒  Access Required')
+    .setDescription('You don\u2019t currently have permission to create campaigns with this bot.\n\nPlease contact the bot developer to request access.')
+    .setFooter({ text: BRAND_FOOTER });
 }
 
 function logEmbed(title, description) {
@@ -84,6 +100,7 @@ function logEmbed(title, description) {
     .setColor(COLOR_LOG)
     .setTitle(title)
     .setDescription(description)
+    .setFooter({ text: BRAND_FOOTER })
     .setTimestamp();
 }
 
@@ -105,11 +122,11 @@ function wizardEmbed(draft) {
 
   return new EmbedBuilder()
     .setColor(COLOR)
-    .setTitle(`📋 Draft Campaign: ${draft.name}`)
+    .setTitle(`📋  Draft Campaign: ${draft.name}`)
     .addFields(
-      { name: 'Required Servers', value: serverLines },
-      { name: 'Verification Role', value: roleLine },
-      { name: 'Verification Period', value: dateLine }
+      { name: '🌐  Required Servers', value: serverLines },
+      { name: '🎭  Verification Role', value: roleLine },
+      { name: '🕒  Verification Period', value: dateLine }
     )
     .setFooter({ text: 'Use the buttons below to complete setup, then Finish & Create.' });
 }
@@ -119,17 +136,18 @@ function wizardRows(draft) {
     draft.requiredServers.length >= 2 && draft.roleServerId && draft.startAt && draft.deadlineAt;
 
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('wizard_add_server').setLabel('➕ Add Server').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('wizard_set_role').setLabel('🎭 Set Role').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('wizard_set_dates').setLabel('🗓️ Set Dates').setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId('wizard_add_server').setLabel('Add Server').setEmoji('➕').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('wizard_set_role').setLabel('Set Role').setEmoji('🎭').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId('wizard_set_dates').setLabel('Set Dates').setEmoji('🗓️').setStyle(ButtonStyle.Secondary)
   );
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('wizard_finish')
-      .setLabel('✅ Finish & Create')
+      .setLabel('Finish & Create')
+      .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!canFinish),
-    new ButtonBuilder().setCustomId('wizard_cancel').setLabel('✖ Cancel').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId('wizard_cancel').setLabel('Cancel').setEmoji('✖').setStyle(ButtonStyle.Danger)
   );
   return [row1, row2];
 }

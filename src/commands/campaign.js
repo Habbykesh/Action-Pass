@@ -18,9 +18,24 @@ const { recheckCampaign } = require('../services/verificationService');
 const { exportToCsv, exportToExcel, exportToPdf } = require('../services/exportService');
 const { logToCampaignGuilds } = require('../services/logService');
 
+// A campaign should be manageable from ANY server that's actually part
+// of it — the guild that created it, the guild holding the role, or any
+// of the required servers — not just the exact guild it was created
+// from. Otherwise an admin who hops into a partner server to repost the
+// embed there finds nothing.
+function campaignVisibilityWhere(guildId) {
+  return {
+    OR: [
+      { ownerGuildId: guildId },
+      { roleServerId: guildId },
+      { requiredServers: { some: { guildId } } },
+    ],
+  };
+}
+
 async function ownedCampaignChoices(interaction) {
   const campaigns = await prisma.campaign.findMany({
-    where: { ownerGuildId: interaction.guildId },
+    where: campaignVisibilityWhere(interaction.guildId),
     include: { requiredServers: true },
     orderBy: { createdAt: 'desc' },
     take: 25,
@@ -31,7 +46,7 @@ async function ownedCampaignChoices(interaction) {
 async function resolveCampaignOption(interaction) {
   const name = interaction.options.getString('campaign');
   const campaign = await prisma.campaign.findFirst({
-    where: { ownerGuildId: interaction.guildId, name },
+    where: { name, ...campaignVisibilityWhere(interaction.guildId) },
     include: { requiredServers: true },
   });
   return campaign;
@@ -157,6 +172,20 @@ module.exports = {
       return;
     }
 
+    // end / archive / export / recheck are restricted to the server that
+    // created the campaign — a partner server admin can view, check
+    // stats, see members, and repost the embed, but can't end the
+    // campaign, archive it, pull the eligibility export, or force a
+    // recheck on ActionFi's behalf.
+    const OWNER_GUILD_ONLY_SUBCOMMANDS = new Set(['end', 'archive', 'export', 'recheck']);
+    if (OWNER_GUILD_ONLY_SUBCOMMANDS.has(sub) && campaign.ownerGuildId !== interaction.guildId) {
+      await interaction.reply({
+        content: `🔒 Only admins in the server that created **${campaign.name}** can do that.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
     if (sub === 'view') {
       const serverLines = campaign.requiredServers.map((s) => `• ${s.name} (\`${s.guildId}\`)`).join('\n');
       await interaction.reply({
@@ -241,7 +270,7 @@ module.exports = {
 
     if (sub === 'repost') {
       const channel = interaction.options.getChannel('channel') || interaction.channel;
-      const message = await channel.send(verificationEmbed(campaign));
+      const message = await channel.send(verificationEmbed(campaign, channel.guild.iconURL({ size: 256 })));
 
       await prisma.postedEmbed.create({
         data: {
