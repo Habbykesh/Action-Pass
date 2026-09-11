@@ -123,3 +123,24 @@ model CampaignMember {
   @@unique([campaignId, userId])
   @@index([campaignId, eligible])
 }
+
+// A member's self-claimed identity, linked once and locked — separate
+// from Discord's own display name/tag, which can change. Global (not
+// per-campaign) since it's a person's identity, not campaign data.
+model LinkedUsername {
+  id            String   @id @default(cuid())
+  discordUserId String   @unique
+
+  // Display casing is preserved; usernameLower enforces case-insensitive
+  // uniqueness so "Habbykesh" and "habbykesh" can't both be claimed.
+  username      String
+  usernameLower String   @unique
+
+  // True until an admin overrides it — self-service linking only ever
+  // sets this once and then refuses further self-edits.
+  lockedByUser  Boolean  @default(true)
+  setByAdminId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

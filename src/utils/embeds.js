@@ -87,6 +87,17 @@ function campaignNotActiveEmbed(campaign) {
     .setFooter({ text: BRAND_FOOTER });
 }
 
+function usernameRequiredEmbed() {
+  return new EmbedBuilder()
+    .setColor(COLOR_FAIL)
+    .setTitle('🔗  Link Your Username First')
+    .setDescription(
+      'Before you can verify for this campaign, link a username to your account.\n\n' +
+        'Run `/link-username` and choose a username — this only needs to be done once.'
+    )
+    .setFooter({ text: BRAND_FOOTER });
+}
+
 function accessDeniedEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR_FAIL)
@@ -161,6 +172,7 @@ module.exports = {
   successEmbed,
   missingServersEmbed,
   campaignNotActiveEmbed,
+  usernameRequiredEmbed,
   accessDeniedEmbed,
   logEmbed,
   wizardEmbed,

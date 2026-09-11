@@ -7,7 +7,8 @@ const { Parser } = require('json2csv');
 const { prisma } = require('../database/connect');
 
 const FIELDS = [
-  { label: 'Username', key: 'lastKnownUsername' },
+  { label: 'Linked Username', key: 'linkedUsername' },
+  { label: 'Discord Tag', key: 'lastKnownUsername' },
   { label: 'Discord User ID', key: 'userId' },
   { label: 'Verification Date/Time', key: 'verifiedAtDisplay' },
   { label: 'Membership Status', key: 'membershipStatusDisplay' },
@@ -16,10 +17,11 @@ const FIELDS = [
   { label: 'Campaign', key: 'campaignName' },
 ];
 
-function buildRows(campaign, members) {
+function buildRows(campaign, members, linkedUsernameByUserId) {
   const serverNameByGuildId = new Map(campaign.requiredServers.map((s) => [s.guildId, s.name]));
 
   return members.map((m) => ({
+    linkedUsername: linkedUsernameByUserId.get(m.userId) || 'Not linked',
     lastKnownUsername: m.lastKnownUsername || 'unknown',
     userId: m.userId,
     verifiedAtDisplay: m.firstVerifiedAt ? m.firstVerifiedAt.toISOString() : 'Never',
@@ -42,7 +44,12 @@ async function getExportData(campaignId, { eligibleOnly = true } = {}) {
     orderBy: { firstVerifiedAt: 'asc' },
   });
 
-  return { campaign, rows: buildRows(campaign, members) };
+  const linkedUsernames = await prisma.linkedUsername.findMany({
+    where: { discordUserId: { in: members.map((m) => m.userId) } },
+  });
+  const linkedUsernameByUserId = new Map(linkedUsernames.map((l) => [l.discordUserId, l.username]));
+
+  return { campaign, rows: buildRows(campaign, members, linkedUsernameByUserId) };
 }
 
 function tmpFilePath(campaignName, ext) {

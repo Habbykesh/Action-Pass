@@ -39,6 +39,14 @@ async function handleVerificationAttempt(client, campaign, userId, username, sou
     return { alreadyVerified: true, allPresent: true, statusMap: existing.serverStatus };
   }
 
+  // Linking a username is mandatory before a fresh verification attempt
+  // can proceed — already-eligible members above are unaffected, this
+  // only gates new/incomplete attempts.
+  const linked = await prisma.linkedUsername.findUnique({ where: { discordUserId: userId } });
+  if (!linked) {
+    return { needsUsernameLink: true };
+  }
+
   const { statusMap, allPresent } = await checkMembership(client, campaign, userId);
   const now = new Date();
 

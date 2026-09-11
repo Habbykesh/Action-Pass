@@ -17,6 +17,7 @@ const {
   successEmbed,
   missingServersEmbed,
   campaignNotActiveEmbed,
+  usernameRequiredEmbed,
 } = require('../utils/embeds');
 const { createOrResolveCampaignRole } = require('../services/roleService');
 const { handleVerificationAttempt } = require('../services/verificationService');
@@ -303,7 +304,7 @@ async function handleVerifyButton(interaction) {
 
   await interaction.deferReply({ ephemeral: true });
 
-  const { alreadyVerified, allPresent, statusMap } = await handleVerificationAttempt(
+  const { alreadyVerified, needsUsernameLink, allPresent, statusMap } = await handleVerificationAttempt(
     interaction.client,
     campaign,
     interaction.user.id,
@@ -311,7 +312,9 @@ async function handleVerifyButton(interaction) {
     interaction.guildId
   );
 
-  if (alreadyVerified) {
+  if (needsUsernameLink) {
+    await interaction.editReply({ embeds: [usernameRequiredEmbed()] });
+  } else if (alreadyVerified) {
     await interaction.editReply({ embeds: [eligibleEmbed()] });
   } else if (allPresent) {
     await interaction.editReply({ embeds: [successEmbed(campaign)] });
