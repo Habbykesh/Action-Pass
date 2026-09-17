@@ -11,6 +11,26 @@ function isServerAdmin(interaction) {
 }
 
 /**
+ * The Alpha/Code Gate management commands (/generate-codes, /codes)
+ * require Discord's Manage Server permission — deliberately looser
+ * than the Administrator-only /campaign and /setup commands, per spec.
+ */
+function hasManageGuild(interaction) {
+  return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
+/**
+ * The Alpha Gate and Visual Verification Gate are exclusive to the
+ * Action Model server. Slash commands are registered globally, so this
+ * runtime check is what actually enforces that — not Discord's
+ * per-command permission system, which only gates *who* can run a
+ * command within a guild, not *which* guild it works in.
+ */
+function isActionModelGuild(guildId) {
+  return guildId === config.actionModelGuildId;
+}
+
+/**
  * Determines whether the given guild is allowed to create/manage its own
  * partnership campaigns. The home guild (ActionFi's own server) always
  * has access. Otherwise it depends on the global partner access toggle
@@ -30,4 +50,6 @@ module.exports = {
   isBotOwner,
   isServerAdmin,
   hasCampaignAccess,
+  hasManageGuild,
+  isActionModelGuild,
 };

@@ -20,6 +20,13 @@ const config = {
     .filter(Boolean),
   homeGuildId: requireEnv('HOME_GUILD_ID'),
   recheckIntervalMinutes: Number(process.env.RECHECK_INTERVAL_MINUTES || 60),
+
+  // The Action Model server. The Alpha/Code Gate and Visual Verification
+  // Gate are exclusive to this one guild — every command and component
+  // handler for those features checks against this ID at runtime, since
+  // slash commands are registered globally and default member
+  // permissions alone don't restrict a command to a single server.
+  actionModelGuildId: requireEnv('ACTION_MODEL_GUILD_ID'),
 };
 
 if (config.ownerIds.length === 0) {

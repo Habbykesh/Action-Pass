@@ -19,9 +19,31 @@ const {
   campaignNotActiveEmbed,
   usernameRequiredEmbed,
 } = require('../utils/embeds');
-const { createOrResolveCampaignRole } = require('../services/roleService');
+const { createOrResolveCampaignRole, assignGuildRole, memberHasRole } = require('../services/roleService');
 const { handleVerificationAttempt } = require('../services/verificationService');
-const { logToCampaignGuilds } = require('../services/logService');
+const { logToCampaignGuilds, logToGuild } = require('../services/logService');
+const { isActionModelGuild } = require('../utils/permissions');
+const { getSettings, updateSettings, postOrUpdatePanel } = require('../services/actionModelSettingsService');
+const {
+  generateChallenge,
+  getActiveChallenge,
+  clearChallenge,
+  checkAnswer,
+} = require('../services/challengeService');
+const { redeemCode, releaseCode } = require('../services/accessCodeService');
+const {
+  alreadyVerifiedEmbed,
+  challengeAttachment,
+  challengePrompt,
+  challengeComponents,
+  verifiedSuccessEmbed,
+  verificationNotConfiguredEmbed,
+  codeModal,
+  numberChallengeModal,
+  codeSuccessEmbed,
+  codeFailEmbed,
+} = require('../utils/actionModelEmbeds');
+const { summaryEmbed, menuRows, textFieldModal, roleSelectRow, TEXT_FIELD_META } = require('../utils/actionModelSetupUI');
 
 async function handleSlashCommand(interaction) {
   const command = interaction.client.commands.get(interaction.commandName);
@@ -323,6 +345,281 @@ async function handleVerifyButton(interaction) {
   }
 }
 
+// ── Action Model: Visual Verification Gate ──────────────────────────
+
+function amLogLine({ username, userId, roleId, extra = '' }) {
+  const time = new Date().toUTCString();
+  return `Username: ${username}\nUser ID: ${userId}\nRole: <@&${roleId}>${extra}\nTime: ${time}`;
+}
+
+async function handleAmVerifyStart(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const settings = await getSettings();
+  if (!settings.verificationRoleId) {
+    await interaction.reply({ embeds: [verificationNotConfiguredEmbed()], ephemeral: true });
+    return;
+  }
+
+  const already = await memberHasRole(interaction.client, interaction.guildId, interaction.user.id, settings.verificationRoleId);
+  if (already) {
+    await interaction.reply({ embeds: [alreadyVerifiedEmbed()], ephemeral: true });
+    return;
+  }
+
+  const challenge = generateChallenge(interaction.user.id, interaction.guildId);
+  await interaction.reply({
+    embeds: [challengePrompt(challenge)],
+    components: challengeComponents(challenge),
+    files: [challengeAttachment(challenge)],
+    ephemeral: true,
+  });
+}
+
+async function finishVerification(interaction, settings) {
+  clearChallenge(interaction.user.id, interaction.guildId);
+  try {
+    await assignGuildRole(interaction.client, interaction.guildId, interaction.user.id, settings.verificationRoleId, 'Passed visual verification');
+  } catch (err) {
+    console.error('[amverify] role assignment failed:', err.message);
+    await interaction.update({
+      content: '⚠️ You passed verification, but the role couldn’t be assigned (a permissions or role-hierarchy issue). Please contact an admin.',
+      embeds: [],
+      components: [],
+      files: [],
+    });
+    return;
+  }
+  await interaction.update({ embeds: [verifiedSuccessEmbed(settings.verificationRoleId)], components: [], files: [] });
+  await logToGuild(
+    interaction.client,
+    interaction.guildId,
+    '✅ Verification Successful',
+    amLogLine({ username: interaction.user.username, userId: interaction.user.id, roleId: settings.verificationRoleId })
+  );
+}
+
+async function retryChallenge(interaction) {
+  const challenge = generateChallenge(interaction.user.id, interaction.guildId);
+  await interaction.update({
+    embeds: [challengePrompt(challenge, { wrongAttempt: true })],
+    components: challengeComponents(challenge),
+    files: [challengeAttachment(challenge)],
+  });
+}
+
+async function handleAmChallengePickButton(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
+  if (!challenge) {
+    await interaction.update({ content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] });
+    return;
+  }
+
+  const index = Number(interaction.customId.replace('amchal_pick_', ''));
+  const picked = challenge.options[index];
+
+  if (!checkAnswer(challenge, picked)) {
+    await retryChallenge(interaction);
+    return;
+  }
+
+  const settings = await getSettings();
+  if (!settings.verificationRoleId) {
+    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
+    return;
+  }
+  await finishVerification(interaction, settings);
+}
+
+async function handleAmChallengePickSelect(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
+  if (!challenge) {
+    await interaction.update({ content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] });
+    return;
+  }
+
+  const index = Number(interaction.values[0]);
+  const picked = challenge.options[index];
+
+  if (!checkAnswer(challenge, picked)) {
+    await retryChallenge(interaction);
+    return;
+  }
+
+  const settings = await getSettings();
+  if (!settings.verificationRoleId) {
+    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
+    return;
+  }
+  await finishVerification(interaction, settings);
+}
+
+async function handleAmChallengeOpenModal(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
+  if (!challenge) {
+    await interaction.reply({ content: 'This challenge expired. Click **Verify** again to get a new one.', ephemeral: true });
+    return;
+  }
+  await interaction.showModal(numberChallengeModal());
+}
+
+async function handleAmChallengeNumberModal(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
+  if (!challenge) {
+    const payload = { content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] };
+    if (interaction.isFromMessage?.()) await interaction.update(payload);
+    else await interaction.reply({ ...payload, ephemeral: true });
+    return;
+  }
+
+  const submitted = interaction.fields.getTextInputValue('answer').trim();
+
+  if (!checkAnswer(challenge, submitted)) {
+    await retryChallenge(interaction);
+    return;
+  }
+
+  const settings = await getSettings();
+  if (!settings.verificationRoleId) {
+    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
+    return;
+  }
+  await finishVerification(interaction, settings);
+}
+
+// ── Action Model: Alpha / Code Gate ─────────────────────────────────
+
+async function handleAmCodeStart(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+  await interaction.showModal(codeModal());
+}
+
+async function handleAmCodeModalSubmit(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const settings = await getSettings();
+  if (!settings.campaignRoleId) {
+    await interaction.reply({ embeds: [codeFailEmbed('not_configured')], ephemeral: true });
+    return;
+  }
+
+  const rawCode = interaction.fields.getTextInputValue('code').trim();
+  await interaction.deferReply({ ephemeral: true });
+
+  const result = await redeemCode({
+    guildId: interaction.guildId,
+    code: rawCode,
+    userId: interaction.user.id,
+    username: interaction.user.username,
+  });
+
+  if (!result.ok) {
+    await interaction.editReply({ embeds: [codeFailEmbed(result.reason)] });
+    return;
+  }
+
+  try {
+    await assignGuildRole(interaction.client, interaction.guildId, interaction.user.id, result.code.roleId, `Redeemed code ${result.code.code}`);
+  } catch (err) {
+    console.error('[amcode] role assignment failed, releasing code:', err.message);
+    await releaseCode(result.code.id);
+    await interaction.editReply({ embeds: [codeFailEmbed('role_failed')] });
+    return;
+  }
+
+  await interaction.editReply({ embeds: [codeSuccessEmbed(result.code.roleId, result.code.code)] });
+
+  await logToGuild(
+    interaction.client,
+    interaction.guildId,
+    '🎟️ Campaign Code Redeemed',
+    `Code: ${result.code.code}\n` + amLogLine({ username: interaction.user.username, userId: interaction.user.id, roleId: result.code.roleId })
+  );
+}
+
+// ── Action Model: /setup panel interactive menu ─────────────────────
+
+async function handleAmSetupMenu(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const field = interaction.values[0];
+
+  if (field === 'verificationRole' || field === 'campaignRole') {
+    await interaction.update({ content: null, embeds: [], components: roleSelectRow(field) });
+    return;
+  }
+
+  const settings = await getSettings();
+  await interaction.showModal(textFieldModal(field, settings[field]));
+}
+
+async function refreshSetupSummary(interaction) {
+  const settings = await getSettings();
+  await interaction.update({ content: null, embeds: [summaryEmbed(settings)], components: menuRows(settings) });
+}
+
+async function handleAmSetupTextModal(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const field = interaction.customId.replace('amsetup_modal_', '');
+  if (!TEXT_FIELD_META[field]) return;
+
+  const raw = interaction.fields.getTextInputValue('value').trim();
+  const value = field === 'embedImageUrl' && raw === '' ? null : raw;
+
+  await updateSettings({ [field]: value });
+  await refreshSetupSummary(interaction);
+}
+
+async function handleAmSetupRoleSelect(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const role = interaction.roles.first();
+  if (interaction.customId === 'amsetup_roleselect_verification') {
+    await updateSettings({ verificationRoleId: role.id });
+  } else {
+    await updateSettings({ campaignRoleId: role.id, campaignRoleName: role.name });
+  }
+  await refreshSetupSummary(interaction);
+}
+
+async function handleAmSetupPostPanel(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+  if (!interaction.channel?.isTextBased()) return;
+
+  await interaction.deferUpdate();
+  const settings = await getSettings();
+
+  try {
+    const { updated } = await postOrUpdatePanel(interaction.client, settings, interaction.channel);
+    await refreshAfterPost(interaction, updated);
+  } catch (err) {
+    console.error('[amsetup] failed to post/update panel:', err.message);
+    await interaction.editReply({
+      content: `⚠️ Couldn't post the panel here: ${err.message}`,
+      embeds: [summaryEmbed(settings)],
+      components: menuRows(settings),
+    });
+  }
+}
+
+async function refreshAfterPost(interaction, updated) {
+  const settings = await getSettings();
+  await interaction.editReply({
+    content: updated ? '✅ Panel updated in place.' : '✅ Panel posted in this channel.',
+    embeds: [summaryEmbed(settings)],
+    components: menuRows(settings),
+  });
+}
+
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
@@ -343,13 +640,59 @@ module.exports = {
         await handleWizardButton(interaction);
         return;
       }
+      if (interaction.customId === 'amverify_start') {
+        await handleAmVerifyStart(interaction);
+        return;
+      }
+      if (interaction.customId === 'amcode_start') {
+        await handleAmCodeStart(interaction);
+        return;
+      }
+      if (interaction.customId === 'amchal_openmodal') {
+        await handleAmChallengeOpenModal(interaction);
+        return;
+      }
+      if (interaction.customId.startsWith('amchal_pick_')) {
+        await handleAmChallengePickButton(interaction);
+        return;
+      }
+      if (interaction.customId === 'amsetup_post_panel') {
+        await handleAmSetupPostPanel(interaction);
+        return;
+      }
+      return;
+    }
+    if (interaction.isRoleSelectMenu()) {
+      if (interaction.customId.startsWith('amsetup_roleselect_')) {
+        await handleAmSetupRoleSelect(interaction);
+      }
       return;
     }
     if (interaction.isStringSelectMenu()) {
+      if (interaction.customId === 'amchal_pick_select') {
+        await handleAmChallengePickSelect(interaction);
+        return;
+      }
+      if (interaction.customId === 'amsetup_menu') {
+        await handleAmSetupMenu(interaction);
+        return;
+      }
       await handleSelectMenu(interaction);
       return;
     }
     if (interaction.isModalSubmit()) {
+      if (interaction.customId === 'amcode_modal') {
+        await handleAmCodeModalSubmit(interaction);
+        return;
+      }
+      if (interaction.customId === 'amchal_modal_number') {
+        await handleAmChallengeNumberModal(interaction);
+        return;
+      }
+      if (interaction.customId.startsWith('amsetup_modal_')) {
+        await handleAmSetupTextModal(interaction);
+        return;
+      }
       await handleModalSubmit(interaction);
     }
   },

@@ -144,3 +144,59 @@ model LinkedUsername {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// ── Action Model: Alpha Gate + Verification Gate ───────────────────
+// Everything below is scoped to a single Discord server (the Action
+// Model server, enforced in application code via ACTION_MODEL_GUILD_ID)
+// and is completely independent of the cross-server Campaign system
+// above — no LinkedUsername is required for either feature.
+
+// Singleton row (guildId unique) holding the Action Model verification
+// panel's configurable wording/roles and the posted-message location so
+// /setup can edit the existing panel in place instead of reposting.
+model ActionModelSettings {
+  id      Int    @id @default(1)
+  guildId String @unique
+
+  embedTitle       String  @default("ACTION MODEL")
+  embedDescription String  @default("Complete verification below to get access.")
+  embedImageUrl    String?
+
+  verifyButtonLabel   String  @default("✅ Verify")
+  verificationRoleId  String?
+
+  campaignButtonLabel String  @default("🏆 Alpha Winners")
+  campaignRoleId      String?
+  campaignRoleName    String?
+
+  panelChannelId String?
+  panelMessageId String?
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// One-time-use Alpha/WL access codes. The role is snapshotted onto each
+// code at generation time, so changing /setup's campaign role for a
+// future campaign never changes what an already-printed, still-unused
+// code grants.
+model AccessCode {
+  id      String @id @default(cuid())
+  guildId String
+
+  code      String @unique
+  codeUpper String @unique
+
+  roleId   String
+  roleName String
+
+  used         Boolean   @default(false)
+  usedByUserId String?
+  usedByName   String?
+  usedAt       DateTime?
+
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  @@index([guildId, used])
+}

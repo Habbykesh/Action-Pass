@@ -119,3 +119,47 @@ infrastructure.
   to catch anything missed while the bot was offline.
 - Campaign creation drafts live in memory for 15 minutes; if a wizard
   session times out, just run `/campaign create` again.
+
+## Action Model: Alpha Gate + Visual Verification Gate
+
+Two extra features bolted onto this same bot, exclusive to one server (set
+via `ACTION_MODEL_GUILD_ID` in `.env`). They're completely independent of
+the cross-server Campaign system above — **no `/link-username` required**
+for either one.
+
+| Command | Who | Purpose |
+|---|---|---|
+| `/setup panel` | Admin, Action Model only | Interactive menu to edit the panel's title/description/image, both button labels, and both roles, plus post/update the live panel message |
+| `/generate-codes <amount>` | Manage Server, Action Model only | Generate up to 100 one-time `PASS-XXXX` codes for the currently-configured campaign role |
+| `/codes` | Manage Server, Action Model only | Total/used/unused code stats |
+
+**Visual Verification Gate** — clicking the panel's Verify button serves a
+randomly-picked challenge (distorted letters/numbers to pick from buttons,
+a number to type into a modal, or a simple drawn object to pick from a
+dropdown). Correct answers are never sent to the client; a wrong guess
+gets a brand-new challenge, and attempts are unlimited. Passing grants the
+configured Verification Role. Already-verified members get an instant
+"already Verified" response instead of another challenge.
+
+**Alpha / Code Gate** — the panel's second button opens a modal for a
+code. A valid, unused code atomically flips to used (so two people can't
+redeem the same code at once) and grants the role that was configured
+*when that code was generated* — so rotating the campaign role/label in
+`/setup panel` for a future WL drop doesn't change what already-printed
+Alpha codes do. If role assignment fails (permissions/hierarchy), the
+code is automatically put back to unused rather than being burned.
+
+Both flows log to the same single log channel as everything else
+(`/setup log-channel`) — no separate logging system.
+
+Challenge images are drawn procedurally on the server with `@napi-rs/canvas`
+(text distortion + a handful of hand-drawn object icons), so there's no
+external image API or asset bundle involved.
+
+After pulling this update, run one more migration for the new tables:
+```bash
+npx prisma migrate dev --name action-model-alpha-verification-gate
+```
+(on Railway, this applies automatically on the next deploy via
+`prisma migrate deploy`, same as any other schema change).
+

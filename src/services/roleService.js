@@ -53,4 +53,32 @@ async function removeCampaignRole(client, campaign, userId) {
   return true;
 }
 
-module.exports = { createOrResolveCampaignRole, assignCampaignRole, removeCampaignRole };
+/**
+ * Generic single-guild role grant used by the Action Model Alpha/
+ * Verification gates (unlike the cross-server campaign roles above,
+ * these always live in the same guild the interaction happened in).
+ * Throws on a Discord permission/role-hierarchy failure rather than
+ * swallowing it, since callers need to distinguish "failed" from
+ * "succeeded" to decide whether to consume an access code.
+ */
+async function assignGuildRole(client, guildId, userId, roleId, reason) {
+  const guild = await client.guilds.fetch(guildId);
+  const member = await guild.members.fetch(userId);
+  if (member.roles.cache.has(roleId)) return { alreadyHad: true };
+  await member.roles.add(roleId, reason);
+  return { alreadyHad: false };
+}
+
+async function memberHasRole(client, guildId, userId, roleId) {
+  const guild = await client.guilds.fetch(guildId);
+  const member = await guild.members.fetch(userId).catch(() => null);
+  return Boolean(member?.roles.cache.has(roleId));
+}
+
+module.exports = {
+  createOrResolveCampaignRole,
+  assignCampaignRole,
+  removeCampaignRole,
+  assignGuildRole,
+  memberHasRole,
+};
