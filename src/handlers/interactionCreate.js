@@ -33,13 +33,12 @@ const {
 const { redeemCode, releaseCode } = require('../services/accessCodeService');
 const {
   alreadyVerifiedEmbed,
-  challengeAttachment,
   challengePrompt,
   challengeComponents,
   verifiedSuccessEmbed,
   verificationNotConfiguredEmbed,
   codeModal,
-  numberChallengeModal,
+  wordChallengeModal,
   codeSuccessEmbed,
   codeFailEmbed,
 } = require('../utils/actionModelEmbeds');
@@ -371,7 +370,6 @@ async function handleAmVerifyStart(interaction) {
   await interaction.reply({
     embeds: [challengePrompt(challenge)],
     components: challengeComponents(challenge),
-    files: [challengeAttachment(challenge)],
     ephemeral: true,
   });
 }
@@ -404,7 +402,7 @@ async function retryChallenge(interaction) {
   await interaction.update({
     embeds: [challengePrompt(challenge, { wrongAttempt: true })],
     components: challengeComponents(challenge),
-    files: [challengeAttachment(challenge)],
+    files: [],
   });
 }
 
@@ -466,10 +464,10 @@ async function handleAmChallengeOpenModal(interaction) {
     await interaction.reply({ content: 'This challenge expired. Click **Verify** again to get a new one.', ephemeral: true });
     return;
   }
-  await interaction.showModal(numberChallengeModal());
+  await interaction.showModal(wordChallengeModal());
 }
 
-async function handleAmChallengeNumberModal(interaction) {
+async function handleAmChallengeWordModal(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
 
   const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
@@ -685,8 +683,8 @@ module.exports = {
         await handleAmCodeModalSubmit(interaction);
         return;
       }
-      if (interaction.customId === 'amchal_modal_number') {
-        await handleAmChallengeNumberModal(interaction);
+      if (interaction.customId === 'amchal_modal_word') {
+        await handleAmChallengeWordModal(interaction);
         return;
       }
       if (interaction.customId.startsWith('amsetup_modal_')) {

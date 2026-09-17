@@ -4,7 +4,6 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
-  AttachmentBuilder,
 } = require('discord.js');
 
 const COLOR = 0x5865f2;
@@ -32,53 +31,46 @@ function alreadyVerifiedEmbed() {
   return new EmbedBuilder().setColor(COLOR_SUCCESS).setDescription('✅ You’re already Verified.');
 }
 
-function challengeAttachment(challenge) {
-  return new AttachmentBuilder(challenge.image, { name: 'challenge.png' });
-}
-
 function challengePrompt(challenge, { wrongAttempt = false } = {}) {
-  const embed = new EmbedBuilder()
-    .setColor(COLOR)
-    .setTitle('🔎 Visual Verification')
-    .setImage('attachment://challenge.png');
+  const embed = new EmbedBuilder().setColor(COLOR).setTitle('🧠 Quick Verification');
 
-  if (challenge.type === 'letters') {
-    embed.setDescription('Look at the image and select the sequence you saw.');
-  } else if (challenge.type === 'number') {
-    embed.setDescription('Look at the image, then click below and type the number you saw.');
+  if (challenge.type === 'emoji') {
+    embed.setDescription(`Click the ${challenge.answer} (**${challenge.promptLabel}**) button below.`);
+  } else if (challenge.type === 'math') {
+    embed.setDescription(`Select the correct answer: **${challenge.promptLabel} = ?**`);
   } else {
-    embed.setDescription('Look at the image and select the object you saw.');
+    embed.setDescription(`Type this word exactly: **${challenge.promptLabel}**`);
   }
 
   if (wrongAttempt) {
-    embed.addFields({ name: '❌ Incorrect', value: 'That wasn’t it — here’s a new challenge, try again.' });
+    embed.addFields({ name: '❌ Incorrect', value: 'That wasn\u2019t it — here\u2019s a new challenge, try again.' });
   }
 
   return embed;
 }
 
 function challengeComponents(challenge) {
-  if (challenge.type === 'number') {
+  if (challenge.type === 'word') {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('amchal_openmodal').setLabel('Enter the number').setStyle(ButtonStyle.Primary)
+        new ButtonBuilder().setCustomId('amchal_openmodal').setLabel('Enter the word').setStyle(ButtonStyle.Primary)
       ),
     ];
   }
 
-  if (challenge.type === 'letters') {
+  if (challenge.type === 'emoji') {
     const row = new ActionRowBuilder().addComponents(
-      challenge.options.map((opt, i) =>
-        new ButtonBuilder().setCustomId(`amchal_pick_${i}`).setLabel(opt).setStyle(ButtonStyle.Secondary)
+      challenge.options.map((emoji, i) =>
+        new ButtonBuilder().setCustomId(`amchal_pick_${i}`).setEmoji(emoji).setStyle(ButtonStyle.Secondary)
       )
     );
     return [row];
   }
 
-  // object challenge — dropdown
+  // math challenge — dropdown of numeric answers
   const select = new StringSelectMenuBuilder()
     .setCustomId('amchal_pick_select')
-    .setPlaceholder('Select the object you saw')
+    .setPlaceholder('Select the correct answer')
     .addOptions(challenge.options.map((opt, i) => ({ label: opt, value: String(i) })));
   return [new ActionRowBuilder().addComponents(select)];
 }
@@ -114,19 +106,19 @@ function codeModal() {
     );
 }
 
-function numberChallengeModal() {
+function wordChallengeModal() {
   const { ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
   return new ModalBuilder()
-    .setCustomId('amchal_modal_number')
-    .setTitle('Enter the Number')
+    .setCustomId('amchal_modal_word')
+    .setTitle('Enter the Word')
     .addComponents(
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId('answer')
-          .setLabel('The number you saw')
+          .setLabel('Type the word exactly as shown')
           .setStyle(TextInputStyle.Short)
           .setRequired(true)
-          .setMaxLength(12)
+          .setMaxLength(20)
       )
     );
 }
@@ -153,13 +145,12 @@ module.exports = {
   panelEmbed,
   panelRows,
   alreadyVerifiedEmbed,
-  challengeAttachment,
   challengePrompt,
   challengeComponents,
   verifiedSuccessEmbed,
   verificationNotConfiguredEmbed,
   codeModal,
-  numberChallengeModal,
+  wordChallengeModal,
   codeSuccessEmbed,
   codeFailEmbed,
 };

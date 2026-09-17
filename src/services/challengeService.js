@@ -1,27 +1,23 @@
-// Active visual-verification challenges, one per user per guild. Kept
-// in memory (mirroring the existing campaignWizard draft pattern) since
-// a challenge only needs to survive the few seconds between the user
-// seeing the image and answering it — it's never looked up outside a
-// live interaction, so it doesn't need a database row. The correct
-// answer lives only here, never in anything sent to the client.
-
-const { renderText, renderObject, OBJECT_NAMES } = require('./challengeImageService');
+// Active human-verification challenges, one per user per guild. Kept in
+// memory (mirroring the campaignWizard draft pattern) since a challenge
+// only needs to survive the few seconds between the user seeing it and
+// answering — it's never looked up outside a live interaction, so it
+// doesn't need a database row. The correct answer lives only here,
+// never in anything sent to the client.
+//
+// All three challenge types are text/emoji only — no image generation,
+// no canvas, no native image dependency. Discord already renders emoji
+// natively, so an emoji-pick challenge looks clean for free.
 
 const challenges = new Map();
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
-
-const CODE_CHARSET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O/1/I/L — avoids ambiguity
 
 function key(userId, guildId) {
   return `${guildId}:${userId}`;
 }
 
-function randomFrom(charset, length) {
-  let out = '';
-  for (let i = 0; i < length; i++) {
-    out += charset[Math.floor(Math.random() * charset.length)];
-  }
-  return out;
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function shuffle(arr) {
@@ -33,49 +29,67 @@ function shuffle(arr) {
   return copy;
 }
 
-function buildLetterChallenge() {
-  const answer = randomFrom(CODE_CHARSET, 6);
-  const decoys = new Set();
-  while (decoys.size < 3) {
-    const candidate = randomFrom(CODE_CHARSET, 6);
-    if (candidate !== answer) decoys.add(candidate);
-  }
-  const options = shuffle([answer, ...decoys]);
+const EMOJI_POOL = [
+  { emoji: '🐶', label: 'dog' },
+  { emoji: '🍎', label: 'apple' },
+  { emoji: '🚗', label: 'car' },
+  { emoji: '🌳', label: 'tree' },
+  { emoji: '⭐', label: 'star' },
+  { emoji: '☂️', label: 'umbrella' },
+  { emoji: '🏠', label: 'house' },
+  { emoji: '☕', label: 'cup' },
+  { emoji: '🎈', label: 'balloon' },
+  { emoji: '🎸', label: 'guitar' },
+  { emoji: '🎯', label: 'target' },
+  { emoji: '🌙', label: 'moon' },
+];
+
+function buildEmojiChallenge() {
+  const chosen = shuffle(EMOJI_POOL).slice(0, 4);
+  const answerItem = chosen[randInt(0, chosen.length - 1)];
   return {
-    type: 'letters',
-    answer,
-    options,
-    image: renderText(answer),
+    type: 'emoji',
+    answer: answerItem.emoji,
+    promptLabel: answerItem.label,
+    options: chosen.map((c) => c.emoji),
   };
 }
 
-function buildNumberChallenge() {
-  const answer = String(randomFrom('0123456789', 6));
+function buildMathChallenge() {
+  const a = randInt(2, 12);
+  const b = randInt(2, 12);
+  const answer = String(a + b);
+  const decoys = new Set();
+  while (decoys.size < 3) {
+    const offset = randInt(-5, 5);
+    if (offset === 0) continue;
+    const candidate = String(a + b + offset);
+    if (candidate !== answer && Number(candidate) > 0) decoys.add(candidate);
+  }
   return {
-    type: 'number',
+    type: 'math',
     answer,
+    promptLabel: `${a} + ${b}`,
+    options: shuffle([answer, ...decoys]),
+  };
+}
+
+const WORD_LIST = [
+  'PURPLE', 'GALAXY', 'ROCKET', 'GARDEN', 'CASTLE', 'WHISPER',
+  'LANTERN', 'MARBLE', 'THUNDER', 'VELVET', 'COMPASS', 'HARBOR',
+];
+
+function buildWordChallenge() {
+  const answer = WORD_LIST[randInt(0, WORD_LIST.length - 1)];
+  return {
+    type: 'word',
+    answer,
+    promptLabel: answer,
     options: null,
-    image: renderText(answer),
   };
 }
 
-function buildObjectChallenge() {
-  const answer = OBJECT_NAMES[Math.floor(Math.random() * OBJECT_NAMES.length)];
-  const decoys = new Set();
-  while (decoys.size < 3) {
-    const candidate = OBJECT_NAMES[Math.floor(Math.random() * OBJECT_NAMES.length)];
-    if (candidate !== answer) decoys.add(candidate);
-  }
-  const options = shuffle([answer, ...decoys]);
-  return {
-    type: 'object',
-    answer,
-    options,
-    image: renderObject(answer),
-  };
-}
-
-const BUILDERS = [buildLetterChallenge, buildNumberChallenge, buildObjectChallenge];
+const BUILDERS = [buildEmojiChallenge, buildMathChallenge, buildWordChallenge];
 
 /**
  * Generates a brand-new challenge (randomly one of the 3 types) and
@@ -85,7 +99,7 @@ const BUILDERS = [buildLetterChallenge, buildNumberChallenge, buildObjectChallen
  * again.
  */
 function generateChallenge(userId, guildId) {
-  const builder = BUILDERS[Math.floor(Math.random() * BUILDERS.length)];
+  const builder = BUILDERS[randInt(0, BUILDERS.length - 1)];
   const challenge = { ...builder(), createdAt: Date.now() };
   challenges.set(key(userId, guildId), challenge);
   return challenge;
