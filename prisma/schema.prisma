@@ -200,3 +200,54 @@ model AccessCode {
 
   @@index([guildId, used])
 }
+
+// ── Action Model: Role Panels ───────────────────────────────────────
+// Generic, reusable button-based role selection — not hardcoded to any
+// one category (region, interest, language, game, etc). Scoped to the
+// Action Model server, same as the Alpha/Verification Gate above.
+
+model RolePanel {
+  id      String @id @default(cuid())
+  guildId String
+
+  // Admin-chosen slug used to select this panel from /role-panel edit,
+  // delete, repost — must stay stable so it can always be re-selected.
+  internalName String
+  title        String
+  description  String
+
+  // Null until the panel has been posted for the first time via
+  // /role-panel repost.
+  channelId String?
+  messageId String?
+
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  buttons RolePanelButton[]
+
+  @@unique([guildId, internalName])
+}
+
+model RolePanelButton {
+  id      String    @id @default(cuid())
+  panelId String
+  panel   RolePanel @relation(fields: [panelId], references: [id], onDelete: Cascade)
+
+  label String
+  emoji String?
+  // Primary | Secondary | Success | Danger — validated in application
+  // code before being mapped to discord.js's ButtonStyle enum.
+  style String
+
+  roleId   String
+  // Snapshotted at add-time purely for display in admin UI; the live
+  // Discord role is always re-checked at click/post time so a renamed
+  // or deleted role is never silently trusted.
+  roleName String
+
+  position Int
+
+  @@index([panelId])
+}

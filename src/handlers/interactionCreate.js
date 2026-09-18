@@ -43,10 +43,51 @@ const {
   codeFailEmbed,
 } = require('../utils/actionModelEmbeds');
 const { summaryEmbed, menuRows, textFieldModal, roleSelectRow, TEXT_FIELD_META } = require('../utils/actionModelSetupUI');
+const {
+  getDraft: getRolePanelDraft,
+  touchDraft: touchRolePanelDraft,
+  clearDraft: clearRolePanelDraft,
+} = require('../utils/rolePanelWizard');
+const {
+  VALID_STYLES,
+  normalizeStyle,
+  rolePanelWizardEmbed,
+  rolePanelWizardRows,
+  infoModal,
+  addButtonModal,
+  roleMissingEmbed,
+  roleSelectionEmbed,
+} = require('../utils/rolePanelEmbeds');
+const {
+  postOrUpdatePanel: postOrUpdateRolePanel,
+  handleRolePanelClick,
+} = require('../services/rolePanelService');
+
+// Every command except these two is restricted to the Action Model
+// server. Partner servers only ever need to (a) post the verification
+// embed via /campaign repost, and (b) let their own members link a
+// username, which is required before verifying — so both stay usable
+// everywhere. Everything else (campaign management, /setup, Alpha Gate,
+// Role Panels, /partner-access) only runs inside Action Model.
+const PARTNER_ALLOWED_COMMANDS = new Set(['link-username']);
 
 async function handleSlashCommand(interaction) {
   const command = interaction.client.commands.get(interaction.commandName);
   if (!command) return;
+
+  if (!isActionModelGuild(interaction.guildId) && !PARTNER_ALLOWED_COMMANDS.has(interaction.commandName)) {
+    const isCampaignRepost =
+      interaction.commandName === 'campaign' && interaction.options.getSubcommand(false) === 'repost';
+    if (!isCampaignRepost) {
+      await interaction.reply({
+        content:
+          '🔒 This command is only available in the Action Model server. Partner servers can use `/campaign repost` here, and `/link-username` to link an account.',
+        ephemeral: true,
+      });
+      return;
+    }
+  }
+
   try {
     await command.execute(interaction);
   } catch (err) {
@@ -618,6 +659,188 @@ async function refreshAfterPost(interaction, updated) {
   });
 }
 
+// ── Role Panels ──────────────────────────────────────────────────────
+
+async function handleRpWizardButton(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const draft = touchRolePanelDraft(interaction.user.id, interaction.guildId);
+  if (!draft) {
+    await interaction.reply({
+      content: 'This panel draft has expired. Run `/role-panel create` or `/role-panel edit` again.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_set_info') {
+    await interaction.showModal(infoModal(draft));
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_add_button') {
+    await interaction.showModal(addButtonModal());
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_remove_button') {
+    draft.buttons.pop();
+    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_cancel') {
+    clearRolePanelDraft(interaction.user.id, interaction.guildId);
+    await interaction.update({ content: 'Role panel draft cancelled.', embeds: [], components: [] });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_save') {
+    await finishRolePanelWizard(interaction, draft);
+  }
+}
+
+async function finishRolePanelWizard(interaction, draft) {
+  await interaction.deferUpdate();
+
+  try {
+    const buttonData = draft.buttons.map((b, i) => ({
+      label: b.label,
+      emoji: b.emoji,
+      style: b.style,
+      roleId: b.roleId,
+      roleName: b.roleName,
+      position: i,
+    }));
+
+    let panel;
+    if (draft.editingPanelId) {
+      await prisma.rolePanelButton.deleteMany({ where: { panelId: draft.editingPanelId } });
+      panel = await prisma.rolePanel.update({
+        where: { id: draft.editingPanelId },
+        data: {
+          title: draft.title,
+          description: draft.description,
+          buttons: { create: buttonData },
+        },
+        include: { buttons: true },
+      });
+    } else {
+      panel = await prisma.rolePanel.create({
+        data: {
+          guildId: draft.guildId,
+          internalName: draft.internalName,
+          title: draft.title,
+          description: draft.description,
+          createdByUserId: draft.createdByUserId,
+          buttons: { create: buttonData },
+        },
+        include: { buttons: true },
+      });
+    }
+
+    clearRolePanelDraft(interaction.user.id, interaction.guildId);
+
+    if (panel.channelId && panel.messageId) {
+      await postOrUpdateRolePanel(interaction.client, panel).catch((err) => {
+        console.error('[rpwizard_save] failed to refresh posted panel:', err.message);
+      });
+      await interaction.editReply({ content: '✅ Saved — the live panel message has been updated.', embeds: [], components: [] });
+    } else {
+      await interaction.editReply({
+        content: `✅ Saved **${panel.internalName}**. Post it with \`/role-panel repost name:${panel.internalName}\`.`,
+        embeds: [],
+        components: [],
+      });
+    }
+
+    await logToGuild(
+      interaction.client,
+      draft.guildId,
+      draft.editingPanelId ? '🎛️ Role Panel Edited' : '📋 Role Panel Created',
+      `Panel: ${panel.title}\n${draft.editingPanelId ? 'Edited' : 'Created'} by <@${draft.createdByUserId}>`
+    );
+  } catch (err) {
+    console.error('[rpwizard_save]', err);
+    await interaction.editReply({ content: `⚠️ Couldn't save: ${err.message}`, embeds: [], components: [] });
+  }
+}
+
+async function handleRpWizardModalSubmit(interaction) {
+  const draft = touchRolePanelDraft(interaction.user.id, interaction.guildId);
+  if (!draft) {
+    await interaction.reply({
+      content: 'This panel draft has expired. Run `/role-panel create` or `/role-panel edit` again.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_modal_info') {
+    draft.title = interaction.fields.getTextInputValue('title').trim();
+    draft.description = interaction.fields.getTextInputValue('description').trim();
+    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_modal_button') {
+    if (draft.buttons.length >= 25) {
+      await interaction.reply({ content: 'This panel already has the maximum of 25 buttons.', ephemeral: true });
+      return;
+    }
+
+    const label = interaction.fields.getTextInputValue('label').trim();
+    const emojiRaw = interaction.fields.getTextInputValue('emoji').trim();
+    const roleId = interaction.fields.getTextInputValue('role_id').trim();
+    const styleRaw = interaction.fields.getTextInputValue('style').trim();
+
+    const style = normalizeStyle(styleRaw);
+    if (!style) {
+      await interaction.reply({ content: `❌ Style must be one of: ${VALID_STYLES.join(', ')}.`, ephemeral: true });
+      return;
+    }
+
+    const role = interaction.guild.roles.cache.get(roleId) || (await interaction.guild.roles.fetch(roleId).catch(() => null));
+    if (!role) {
+      await interaction.reply({
+        content: `❌ Couldn't find a role with ID \`${roleId}\` in this server. Double-check the ID.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    draft.buttons.push({ label, emoji: emojiRaw || null, style, roleId: role.id, roleName: role.name });
+    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+  }
+}
+
+async function handleRolePanelButtonClick(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const parts = interaction.customId.split('_');
+  const panelId = parts[1];
+  const buttonId = parts[2];
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const result = await handleRolePanelClick(interaction.client, interaction, panelId, buttonId);
+
+  if (result.result === 'panel_missing' || result.result === 'button_missing') {
+    await interaction.editReply({ content: 'This panel no longer exists.' });
+    return;
+  }
+  if (result.result === 'role_missing') {
+    await interaction.editReply({ embeds: [roleMissingEmbed()] });
+    return;
+  }
+  if (result.result === 'role_assign_failed') {
+    await interaction.editReply({ content: '⚠️ Couldn\u2019t assign that role — a permissions issue. An admin has been notified.' });
+    return;
+  }
+
+  await interaction.editReply({ embeds: [roleSelectionEmbed(result.result, result.roleName)] });
+}
+
 module.exports = {
   name: 'interactionCreate',
   async execute(interaction) {
@@ -658,6 +881,14 @@ module.exports = {
         await handleAmSetupPostPanel(interaction);
         return;
       }
+      if (interaction.customId.startsWith('rpwizard_')) {
+        await handleRpWizardButton(interaction);
+        return;
+      }
+      if (interaction.customId.startsWith('rolepanel_')) {
+        await handleRolePanelButtonClick(interaction);
+        return;
+      }
       return;
     }
     if (interaction.isRoleSelectMenu()) {
@@ -689,6 +920,10 @@ module.exports = {
       }
       if (interaction.customId.startsWith('amsetup_modal_')) {
         await handleAmSetupTextModal(interaction);
+        return;
+      }
+      if (interaction.customId === 'rpwizard_modal_info' || interaction.customId === 'rpwizard_modal_button') {
+        await handleRpWizardModalSubmit(interaction);
         return;
       }
       await handleModalSubmit(interaction);
