@@ -44,17 +44,18 @@ const {
 } = require('../utils/actionModelEmbeds');
 const { summaryEmbed, menuRows, textFieldModal, roleSelectRow, TEXT_FIELD_META } = require('../utils/actionModelSetupUI');
 const {
-  getDraft: getRolePanelDraft,
   touchDraft: touchRolePanelDraft,
   clearDraft: clearRolePanelDraft,
 } = require('../utils/rolePanelWizard');
 const {
-  VALID_STYLES,
-  normalizeStyle,
   rolePanelWizardEmbed,
   rolePanelWizardRows,
   infoModal,
-  addButtonModal,
+  buttonPickerRow,
+  buttonInfoModal,
+  roleSelectPromptRows,
+  styleSelectPromptRows,
+  pendingButtonStepEmbed,
   roleMissingEmbed,
   roleSelectionEmbed,
 } = require('../utils/rolePanelEmbeds');
@@ -63,29 +64,23 @@ const {
   handleRolePanelClick,
 } = require('../services/rolePanelService');
 
-// Every command except these two is restricted to the Action Model
-// server. Partner servers only ever need to (a) post the verification
-// embed via /campaign repost, and (b) let their own members link a
-// username, which is required before verifying — so both stay usable
-// everywhere. Everything else (campaign management, /setup, Alpha Gate,
-// Role Panels, /partner-access) only runs inside Action Model.
-const PARTNER_ALLOWED_COMMANDS = new Set(['link-username']);
+// Only these two commands are registered globally (see
+// deploy-commands.js) — everything else is registered as an Action
+// Model-only guild command, so Discord itself won't even show other
+// commands to a partner server. This check is defense-in-depth on top
+// of that, in case registration ever falls out of sync.
+const PARTNER_ALLOWED_COMMANDS = new Set(['link-username', 'campaign-repost']);
 
 async function handleSlashCommand(interaction) {
   const command = interaction.client.commands.get(interaction.commandName);
   if (!command) return;
 
   if (!isActionModelGuild(interaction.guildId) && !PARTNER_ALLOWED_COMMANDS.has(interaction.commandName)) {
-    const isCampaignRepost =
-      interaction.commandName === 'campaign' && interaction.options.getSubcommand(false) === 'repost';
-    if (!isCampaignRepost) {
-      await interaction.reply({
-        content:
-          '🔒 This command is only available in the Action Model server. Partner servers can use `/campaign repost` here, and `/link-username` to link an account.',
-        ephemeral: true,
-      });
-      return;
-    }
+    await interaction.reply({
+      content: '🔒 This command is only available in the Action Model server.',
+      ephemeral: true,
+    });
+    return;
   }
 
   try {
@@ -679,13 +674,32 @@ async function handleRpWizardButton(interaction) {
   }
 
   if (interaction.customId === 'rpwizard_add_button') {
-    await interaction.showModal(addButtonModal());
+    draft.pendingButton = { editIndex: null };
+    await interaction.showModal(buttonInfoModal());
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_edit_button') {
+    await interaction.update({
+      content: null,
+      embeds: [rolePanelWizardEmbed(draft)],
+      components: buttonPickerRow('rpwizard_edit_button_select', draft, 'Pick a button to edit'),
+    });
     return;
   }
 
   if (interaction.customId === 'rpwizard_remove_button') {
-    draft.buttons.pop();
-    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    await interaction.update({
+      content: null,
+      embeds: [rolePanelWizardEmbed(draft)],
+      components: buttonPickerRow('rpwizard_remove_button_select', draft, 'Pick a button to remove'),
+    });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_back') {
+    draft.pendingButton = null;
+    await interaction.update({ content: null, embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
     return;
   }
 
@@ -698,6 +712,81 @@ async function handleRpWizardButton(interaction) {
   if (interaction.customId === 'rpwizard_save') {
     await finishRolePanelWizard(interaction, draft);
   }
+}
+
+async function handleRpWizardSelectMenu(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const draft = touchRolePanelDraft(interaction.user.id, interaction.guildId);
+  if (!draft) {
+    await interaction.reply({
+      content: 'This panel draft has expired. Run `/role-panel create` or `/role-panel edit` again.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_edit_button_select') {
+    const index = Number(interaction.values[0]);
+    const existing = draft.buttons[index];
+    draft.pendingButton = { editIndex: index };
+    await interaction.showModal(buttonInfoModal(existing));
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_remove_button_select') {
+    const index = Number(interaction.values[0]);
+    draft.buttons.splice(index, 1);
+    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    return;
+  }
+
+  if (interaction.customId === 'rpwizard_button_style_select') {
+    if (!draft.pendingButton?.roleId) {
+      await interaction.reply({ content: 'That step expired — start over with Add Button or Edit Button.', ephemeral: true });
+      return;
+    }
+    const style = interaction.values[0];
+    const { editIndex, label, emoji, roleId, roleName } = draft.pendingButton;
+    const finished = { label, emoji, roleId, roleName, style };
+
+    if (editIndex != null) {
+      draft.buttons[editIndex] = finished;
+    } else {
+      if (draft.buttons.length >= 25) {
+        await interaction.update({
+          content: 'This panel already has the maximum of 25 buttons — the new one wasn\u2019t added.',
+          embeds: [rolePanelWizardEmbed(draft)],
+          components: rolePanelWizardRows(draft),
+        });
+        draft.pendingButton = null;
+        return;
+      }
+      draft.buttons.push(finished);
+    }
+    draft.pendingButton = null;
+
+    await interaction.update({ content: null, embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+  }
+}
+
+async function handleRpWizardRoleSelect(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  const draft = touchRolePanelDraft(interaction.user.id, interaction.guildId);
+  if (!draft || !draft.pendingButton) {
+    await interaction.reply({ content: 'That step expired — start over with Add Button or Edit Button.', ephemeral: true });
+    return;
+  }
+
+  const role = interaction.roles.first();
+  draft.pendingButton.roleId = role.id;
+  draft.pendingButton.roleName = role.name;
+
+  await interaction.update({
+    embeds: [pendingButtonStepEmbed('style', draft.pendingButton)],
+    components: styleSelectPromptRows(),
+  });
 }
 
 async function finishRolePanelWizard(interaction, draft) {
@@ -783,34 +872,22 @@ async function handleRpWizardModalSubmit(interaction) {
     return;
   }
 
-  if (interaction.customId === 'rpwizard_modal_button') {
-    if (draft.buttons.length >= 25) {
-      await interaction.reply({ content: 'This panel already has the maximum of 25 buttons.', ephemeral: true });
+  if (interaction.customId === 'rpwizard_modal_button_info') {
+    if (!draft.pendingButton) {
+      await interaction.reply({ content: 'That step expired — start over with Add Button or Edit Button.', ephemeral: true });
       return;
     }
 
     const label = interaction.fields.getTextInputValue('label').trim();
     const emojiRaw = interaction.fields.getTextInputValue('emoji').trim();
-    const roleId = interaction.fields.getTextInputValue('role_id').trim();
-    const styleRaw = interaction.fields.getTextInputValue('style').trim();
 
-    const style = normalizeStyle(styleRaw);
-    if (!style) {
-      await interaction.reply({ content: `❌ Style must be one of: ${VALID_STYLES.join(', ')}.`, ephemeral: true });
-      return;
-    }
+    draft.pendingButton.label = label;
+    draft.pendingButton.emoji = emojiRaw || null;
 
-    const role = interaction.guild.roles.cache.get(roleId) || (await interaction.guild.roles.fetch(roleId).catch(() => null));
-    if (!role) {
-      await interaction.reply({
-        content: `❌ Couldn't find a role with ID \`${roleId}\` in this server. Double-check the ID.`,
-        ephemeral: true,
-      });
-      return;
-    }
-
-    draft.buttons.push({ label, emoji: emojiRaw || null, style, roleId: role.id, roleName: role.name });
-    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    await interaction.update({
+      embeds: [pendingButtonStepEmbed('role', draft.pendingButton)],
+      components: roleSelectPromptRows(),
+    });
   }
 }
 
@@ -894,6 +971,10 @@ module.exports = {
     if (interaction.isRoleSelectMenu()) {
       if (interaction.customId.startsWith('amsetup_roleselect_')) {
         await handleAmSetupRoleSelect(interaction);
+        return;
+      }
+      if (interaction.customId === 'rpwizard_button_role_select') {
+        await handleRpWizardRoleSelect(interaction);
       }
       return;
     }
@@ -904,6 +985,10 @@ module.exports = {
       }
       if (interaction.customId === 'amsetup_menu') {
         await handleAmSetupMenu(interaction);
+        return;
+      }
+      if (interaction.customId.startsWith('rpwizard_')) {
+        await handleRpWizardSelectMenu(interaction);
         return;
       }
       await handleSelectMenu(interaction);
@@ -922,7 +1007,7 @@ module.exports = {
         await handleAmSetupTextModal(interaction);
         return;
       }
-      if (interaction.customId === 'rpwizard_modal_info' || interaction.customId === 'rpwizard_modal_button') {
+      if (interaction.customId === 'rpwizard_modal_info' || interaction.customId === 'rpwizard_modal_button_info') {
         await handleRpWizardModalSubmit(interaction);
         return;
       }

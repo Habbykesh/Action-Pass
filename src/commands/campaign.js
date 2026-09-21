@@ -1,7 +1,6 @@
 const {
   SlashCommandBuilder,
   PermissionFlagsBits,
-  ChannelType,
   AttachmentBuilder,
 } = require('discord.js');
 const { prisma } = require('../database/connect');
@@ -11,45 +10,19 @@ const {
   wizardEmbed,
   wizardRows,
   accessDeniedEmbed,
-  verificationEmbed,
-  logEmbed,
 } = require('../utils/embeds');
 const { recheckCampaign } = require('../services/verificationService');
 const { exportToCsv, exportToExcel, exportToPdf } = require('../services/exportService');
 const { logToCampaignGuilds } = require('../services/logService');
-
-// A campaign should be manageable from ANY server that's actually part
-// of it — the guild that created it, the guild holding the role, or any
-// of the required servers — not just the exact guild it was created
-// from. Otherwise an admin who hops into a partner server to repost the
-// embed there finds nothing.
-function campaignVisibilityWhere(guildId) {
-  return {
-    OR: [
-      { ownerGuildId: guildId },
-      { roleServerId: guildId },
-      { requiredServers: { some: { guildId } } },
-    ],
-  };
-}
+const { findCampaignChoices, findCampaignByName } = require('../utils/campaignLookup');
 
 async function ownedCampaignChoices(interaction) {
-  const campaigns = await prisma.campaign.findMany({
-    where: campaignVisibilityWhere(interaction.guildId),
-    include: { requiredServers: true },
-    orderBy: { createdAt: 'desc' },
-    take: 25,
-  });
-  return campaigns;
+  return findCampaignChoices(interaction.guildId);
 }
 
 async function resolveCampaignOption(interaction) {
   const name = interaction.options.getString('campaign');
-  const campaign = await prisma.campaign.findFirst({
-    where: { name, ...campaignVisibilityWhere(interaction.guildId) },
-    include: { requiredServers: true },
-  });
-  return campaign;
+  return findCampaignByName(interaction.guildId, name);
 }
 
 module.exports = {
@@ -102,15 +75,6 @@ module.exports = {
         .setName('recheck')
         .setDescription('Re-verify eligibility for every tracked member of a campaign.')
         .addStringOption((opt) => opt.setName('campaign').setDescription('Campaign name').setRequired(true).setAutocomplete(true))
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('repost')
-        .setDescription('Post (or repost) the verification embed for a campaign in this channel.')
-        .addStringOption((opt) => opt.setName('campaign').setDescription('Campaign name').setRequired(true).setAutocomplete(true))
-        .addChannelOption((opt) =>
-          opt.setName('channel').setDescription('Channel to post in (defaults to this channel)').addChannelTypes(ChannelType.GuildText)
-        )
     )
     .addSubcommand((sub) =>
       sub
@@ -173,10 +137,10 @@ module.exports = {
     }
 
     // end / archive / export / recheck are restricted to the server that
-    // created the campaign — a partner server admin can view, check
-    // stats, see members, and repost the embed, but can't end the
-    // campaign, archive it, pull the eligibility export, or force a
-    // recheck on ActionFi's behalf.
+    // created the campaign — everyone else with access to run /campaign
+    // at all (Action Model only, post-lockdown) can still view, check
+    // stats, and see members, but can't end, archive, export, or force
+    // a recheck unless they're in the owner guild.
     const OWNER_GUILD_ONLY_SUBCOMMANDS = new Set(['end', 'archive', 'export', 'recheck']);
     if (OWNER_GUILD_ONLY_SUBCOMMANDS.has(sub) && campaign.ownerGuildId !== interaction.guildId) {
       await interaction.reply({
@@ -278,23 +242,6 @@ module.exports = {
       await interaction.editReply({
         content: `🔄 Rechecked ${checked} tracked member(s) for **${campaign.name}**. ${becameIneligible} lost eligibility.`,
       });
-      return;
-    }
-
-    if (sub === 'repost') {
-      const channel = interaction.options.getChannel('channel') || interaction.channel;
-      const message = await channel.send(verificationEmbed(campaign, channel.guild.iconURL({ size: 256 })));
-
-      await prisma.postedEmbed.create({
-        data: {
-          campaignId: campaign.id,
-          guildId: interaction.guildId,
-          channelId: channel.id,
-          messageId: message.id,
-        },
-      });
-
-      await interaction.reply({ content: `Verification embed posted in ${channel}.`, ephemeral: true });
       return;
     }
 

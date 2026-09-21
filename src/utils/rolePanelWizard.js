@@ -28,6 +28,11 @@ function startDraft(userId, guildId, internalName, existingPanel = null) {
           .sort((a, b) => a.position - b.position)
           .map((b) => ({ label: b.label, emoji: b.emoji, style: b.style, roleId: b.roleId, roleName: b.roleName }))
       : [],
+    // Holds { label, emoji, roleId, roleName, editIndex } while the
+    // user is mid-way through the Add/Edit Button sub-flow (info modal
+    // → role select → style select). editIndex is null when adding a
+    // new button, or the index being replaced when editing one.
+    pendingButton: null,
     updatedAt: Date.now(),
   };
   drafts.set(key(userId, guildId), draft);

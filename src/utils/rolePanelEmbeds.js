@@ -6,6 +6,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  RoleSelectMenuBuilder,
+  StringSelectMenuBuilder,
 } = require('discord.js');
 
 const COLOR = 0x5865f2;
@@ -48,6 +50,7 @@ function rolePanelWizardEmbed(draft) {
 
 function rolePanelWizardRows(draft) {
   const canSave = Boolean(draft.title) && Boolean(draft.description) && draft.buttons.length >= 1;
+  const hasButtons = draft.buttons.length > 0;
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('rpwizard_set_info').setLabel('Set Info').setEmoji('📝').setStyle(ButtonStyle.Secondary),
@@ -58,11 +61,17 @@ function rolePanelWizardRows(draft) {
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(draft.buttons.length >= 25),
     new ButtonBuilder()
+      .setCustomId('rpwizard_edit_button')
+      .setLabel('Edit Button')
+      .setEmoji('✏️')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!hasButtons),
+    new ButtonBuilder()
       .setCustomId('rpwizard_remove_button')
-      .setLabel('Remove Last Button')
+      .setLabel('Remove Button')
       .setEmoji('➖')
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(draft.buttons.length === 0)
+      .setDisabled(!hasButtons)
   );
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -74,6 +83,85 @@ function rolePanelWizardRows(draft) {
     new ButtonBuilder().setCustomId('rpwizard_cancel').setLabel('Cancel').setEmoji('✖').setStyle(ButtonStyle.Danger)
   );
   return [row1, row2];
+}
+
+// ── Button picker (used by both Edit Button and Remove Button) ─────
+
+function buttonPickerRow(customId, draft, placeholder) {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(customId)
+    .setPlaceholder(placeholder)
+    .addOptions(
+      draft.buttons.map((b, i) => ({
+        label: `${i + 1}. ${b.label}`.slice(0, 100),
+        description: `Role: ${b.roleName} (${b.style})`.slice(0, 100),
+        value: String(i),
+      }))
+    );
+  return [new ActionRowBuilder().addComponents(select), backRow()];
+}
+
+function backRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('rpwizard_back').setLabel('◀ Back').setStyle(ButtonStyle.Secondary)
+  );
+}
+
+// ── Add/Edit button sub-flow: info modal → role select → style select ─
+
+function buttonInfoModal(existing = null) {
+  const modal = new ModalBuilder()
+    .setCustomId('rpwizard_modal_button_info')
+    .setTitle(existing ? 'Edit Button' : 'Add Button');
+  const labelInput = new TextInputBuilder()
+    .setCustomId('label')
+    .setLabel('Button label')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(80);
+  const emojiInput = new TextInputBuilder()
+    .setCustomId('emoji')
+    .setLabel('Emoji (optional)')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(10);
+  if (existing?.label) labelInput.setValue(existing.label);
+  if (existing?.emoji) emojiInput.setValue(existing.emoji);
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(labelInput),
+    new ActionRowBuilder().addComponents(emojiInput)
+  );
+  return modal;
+}
+
+function roleSelectPromptRows() {
+  const select = new RoleSelectMenuBuilder()
+    .setCustomId('rpwizard_button_role_select')
+    .setPlaceholder('Search and select the role for this button')
+    .setMinValues(1)
+    .setMaxValues(1);
+  return [new ActionRowBuilder().addComponents(select), backRow()];
+}
+
+function styleSelectPromptRows() {
+  const select = new StringSelectMenuBuilder()
+    .setCustomId('rpwizard_button_style_select')
+    .setPlaceholder('Pick a button style')
+    .addOptions(VALID_STYLES.map((s) => ({ label: s, value: s })));
+  return [new ActionRowBuilder().addComponents(select), backRow()];
+}
+
+function pendingButtonStepEmbed(step, pending) {
+  const lines = [];
+  if (pending.label) lines.push(`Label: **${pending.emoji ? `${pending.emoji} ` : ''}${pending.label}**`);
+  if (pending.roleName) lines.push(`Role: **${pending.roleName}**`);
+
+  const stepText = { role: 'Now pick the role.', style: 'Now pick the button style.' }[step];
+
+  return new EmbedBuilder()
+    .setColor(COLOR)
+    .setTitle(pending.editIndex != null ? '✏️  Editing Button' : '➕  Adding Button')
+    .setDescription([...lines, '', stepText].filter(Boolean).join('\n'));
 }
 
 function infoModal(draft) {
@@ -99,35 +187,7 @@ function infoModal(draft) {
   return modal;
 }
 
-function addButtonModal() {
-  return new ModalBuilder()
-    .setCustomId('rpwizard_modal_button')
-    .setTitle('Add Button')
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('label').setLabel('Button label').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(80)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('emoji')
-          .setLabel('Emoji (optional)')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setMaxLength(10)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder().setCustomId('role_id').setLabel('Discord role ID').setStyle(TextInputStyle.Short).setRequired(true)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('style')
-          .setLabel('Style: Primary, Secondary, Success, or Danger')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-          .setValue('Secondary')
-      )
-    );
-}
+
 
 // ── Posted panel (member-facing) ────────────────────────────────────
 
@@ -180,7 +240,12 @@ module.exports = {
   rolePanelWizardEmbed,
   rolePanelWizardRows,
   infoModal,
-  addButtonModal,
+  buttonPickerRow,
+  backRow,
+  buttonInfoModal,
+  roleSelectPromptRows,
+  styleSelectPromptRows,
+  pendingButtonStepEmbed,
   rolePanelPostEmbed,
   rolePanelPostRows,
   roleMissingEmbed,

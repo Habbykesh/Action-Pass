@@ -71,7 +71,12 @@ then **Finish & Create**.
    npx prisma migrate dev --name init
    ```
 
-6. Register slash commands (re-run this any time command definitions change):
+6. Register slash commands (re-run this any time command definitions
+   change). This registers `/link-username` and `/campaign-repost`
+   globally (visible in every server), and everything else — `/campaign`,
+   `/setup`, `/partner-access`, `/generate-codes`, `/codes`,
+   `/role-panel`, `/set-username` — as guild commands scoped to
+   `ACTION_MODEL_GUILD_ID` only, so partner servers never see them:
    ```bash
    npm run deploy-commands
    ```
@@ -100,7 +105,10 @@ then **Finish & Create**.
    needed after the first deploy.
 6. After the first successful deploy, run command registration once from
    your machine (or a one-off Railway shell) pointed at the same
-   `DISCORD_TOKEN`/`DISCORD_CLIENT_ID`:
+   `DISCORD_TOKEN`/`DISCORD_CLIENT_ID`. The Action Model-only guild
+   commands go live immediately; the two global commands
+   (`/link-username`, `/campaign-repost`) can take up to an hour to
+   show up everywhere:
    ```bash
    npm run deploy-commands
    ```
