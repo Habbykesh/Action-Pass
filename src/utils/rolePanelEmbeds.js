@@ -13,7 +13,6 @@ const {
 const COLOR = 0x5865f2;
 const COLOR_SUCCESS = 0x57f287;
 const COLOR_FAIL = 0xed4245;
-const BRAND_FOOTER = 'ActionFi Partnerships';
 
 const VALID_STYLES = ['Primary', 'Secondary', 'Success', 'Danger'];
 const STYLE_MAP = {
@@ -195,8 +194,7 @@ function rolePanelPostEmbed(panel) {
   return new EmbedBuilder()
     .setColor(COLOR)
     .setTitle(panel.title)
-    .setDescription(panel.description)
-    .setFooter({ text: BRAND_FOOTER });
+    .setDescription(panel.description);
 }
 
 function rolePanelPostRows(panel) {
@@ -223,8 +221,7 @@ function roleMissingEmbed() {
   return new EmbedBuilder()
     .setColor(COLOR_FAIL)
     .setTitle('⚠️  Button Unavailable')
-    .setDescription('This button\u2019s role no longer exists. An admin has been notified in the log channel.')
-    .setFooter({ text: BRAND_FOOTER });
+    .setDescription('This button\u2019s role no longer exists. An admin has been notified in the log channel.');
 }
 
 function roleSelectionEmbed(result, roleName) {
