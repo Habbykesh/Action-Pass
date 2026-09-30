@@ -23,6 +23,10 @@ function startDraft(userId, guildId, internalName, existingPanel = null) {
     editingPanelId: existingPanel?.id || null,
     title: existingPanel?.title || null,
     description: existingPanel?.description || null,
+    // 'unique' = picking a button swaps out any other role from this
+    // panel; 'multi' = buttons toggle independently. New panels default
+    // to 'unique' (today's only behavior) unless toggled in the wizard.
+    selectionMode: existingPanel?.selectionMode || 'unique',
     buttons: existingPanel
       ? [...existingPanel.buttons]
           .sort((a, b) => a.position - b.position)

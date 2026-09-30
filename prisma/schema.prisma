@@ -216,6 +216,12 @@ model RolePanel {
   title        String
   description  String
 
+  // "unique" (default): picking a button swaps out any other role from
+  // this same panel, so a member holds at most one of this panel's
+  // roles at a time. "multi": buttons toggle independently — a member
+  // can hold any combination of this panel's roles.
+  selectionMode String @default("unique")
+
   // Null until the panel has been posted for the first time via
   // /role-panel repost.
   channelId String?

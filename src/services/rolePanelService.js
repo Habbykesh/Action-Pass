@@ -6,12 +6,20 @@ const { logToGuild } = require('./logService');
  * message in place otherwise — so editing wording/buttons/roles through
  * /role-panel edit never spawns a duplicate message. Mirrors
  * actionModelSettingsService.postOrUpdatePanel.
+ *
+ * `explicitChannel` is only set when the admin deliberately picked a
+ * channel on /role-panel repost — that's read as "move the panel here"
+ * and always posts fresh. Omit it (the normal case) and an already-
+ * posted panel gets edited in place instead of duplicated.
+ * `fallbackChannel` (the channel the command was run in) is only used
+ * the very first time a panel is posted, when there's nowhere on
+ * record yet to edit.
  */
-async function postOrUpdatePanel(client, panel, channel) {
+async function postOrUpdatePanel(client, panel, explicitChannel, fallbackChannel) {
   const { rolePanelPostEmbed, rolePanelPostRows } = require('../utils/rolePanelEmbeds');
   const payload = { embeds: [rolePanelPostEmbed(panel)], components: rolePanelPostRows(panel) };
 
-  if (panel.channelId && panel.messageId && !channel) {
+  if (panel.channelId && panel.messageId && !explicitChannel) {
     try {
       const existingChannel =
         client.channels.cache.get(panel.channelId) || (await client.channels.fetch(panel.channelId).catch(() => null));
@@ -27,7 +35,7 @@ async function postOrUpdatePanel(client, panel, channel) {
     }
   }
 
-  const targetChannel = channel || client.channels.cache.get(panel.channelId);
+  const targetChannel = explicitChannel || fallbackChannel || client.channels.cache.get(panel.channelId);
   if (!targetChannel) throw new Error('No channel to post in — pass one to /role-panel repost.');
 
   const message = await targetChannel.send(payload);
@@ -53,12 +61,15 @@ async function findMissingRoles(guild, panel) {
 }
 
 /**
- * Handles a member clicking a Role Panel button: toggles the role off
- * if they already have it, otherwise enforces exclusivity within the
- * panel (removes any other role from the same panel, then adds the
- * clicked one) and logs the change. A defensive reconciliation pass
- * at the end collapses state to a single role even if two clicks landed
- * near-simultaneously.
+ * Handles a member clicking a Role Panel button.
+ *
+ * - selectionMode "unique" (default): toggles the role off if they
+ *   already have it, otherwise enforces exclusivity within the panel
+ *   (removes any other role from the same panel, then adds the clicked
+ *   one). A defensive reconciliation pass at the end collapses state to
+ *   a single role even if two clicks landed near-simultaneously.
+ * - selectionMode "multi": the clicked role toggles independently —
+ *   other roles from this panel the member holds are left untouched.
  */
 async function handleRolePanelClick(client, interaction, panelId, buttonId) {
   const panel = await prisma.rolePanel.findUnique({ where: { id: panelId }, include: { buttons: true } });
@@ -80,8 +91,8 @@ async function handleRolePanelClick(client, interaction, panelId, buttonId) {
   }
 
   const member = interaction.member;
-  const panelRoleIds = panel.buttons.map((b) => b.roleId);
   const hasClickedRole = member.roles.cache.has(clicked.roleId);
+  const isMulti = panel.selectionMode === 'multi';
 
   let added = null;
   let removed = null;
@@ -90,7 +101,12 @@ async function handleRolePanelClick(client, interaction, panelId, buttonId) {
     await member.roles.remove(clicked.roleId, `Role Panel: ${panel.title} — deselected`).catch(() => {});
     removed = role.name;
   } else {
-    const otherHeldRoleIds = panelRoleIds.filter((id) => id !== clicked.roleId && member.roles.cache.has(id));
+    // Only "unique" panels clear the member's other roles from this
+    // panel before adding the new one — "multi" panels never touch
+    // roles besides the one just clicked.
+    const otherHeldRoleIds = isMulti
+      ? []
+      : panel.buttons.map((b) => b.roleId).filter((id) => id !== clicked.roleId && member.roles.cache.has(id));
     for (const id of otherHeldRoleIds) {
       await member.roles.remove(id, `Role Panel: ${panel.title} — switched selection`).catch(() => {});
     }
@@ -114,12 +130,16 @@ async function handleRolePanelClick(client, interaction, panelId, buttonId) {
     }
 
     // Defensive reconciliation against a near-simultaneous second click
-    // landing while the above awaits were in flight.
-    const freshMember = await guild.members.fetch(interaction.user.id).catch(() => null);
-    if (freshMember) {
-      const stillExtra = panelRoleIds.filter((id) => id !== clicked.roleId && freshMember.roles.cache.has(id));
-      for (const id of stillExtra) {
-        await freshMember.roles.remove(id, `Role Panel: ${panel.title} — exclusivity cleanup`).catch(() => {});
+    // landing while the above awaits were in flight. Skipped for
+    // "multi" panels — there's no exclusivity to enforce.
+    if (!isMulti) {
+      const panelRoleIds = panel.buttons.map((b) => b.roleId);
+      const freshMember = await guild.members.fetch(interaction.user.id).catch(() => null);
+      if (freshMember) {
+        const stillExtra = panelRoleIds.filter((id) => id !== clicked.roleId && freshMember.roles.cache.has(id));
+        for (const id of stillExtra) {
+          await freshMember.roles.remove(id, `Role Panel: ${panel.title} — exclusivity cleanup`).catch(() => {});
+        }
       }
     }
   }

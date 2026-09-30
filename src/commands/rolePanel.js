@@ -154,10 +154,12 @@ module.exports = {
       }
 
       await interaction.deferReply({ ephemeral: true });
-      const channel = interaction.options.getChannel('channel') || interaction.channel;
-      const { updated } = await postOrUpdatePanel(interaction.client, panel, channel);
+      const explicitChannel = interaction.options.getChannel('channel');
+      const { updated, message } = await postOrUpdatePanel(interaction.client, panel, explicitChannel, interaction.channel);
 
-      await interaction.editReply({ content: updated ? `Updated the existing panel message in ${channel}.` : `Posted in ${channel}.` });
+      await interaction.editReply({
+        content: updated ? `Updated the existing panel message in ${message.channel}.` : `Posted in ${message.channel}.`,
+      });
       await logToGuild(
         interaction.client,
         interaction.guildId,
@@ -178,8 +180,9 @@ module.exports = {
           const withButtons = await prisma.rolePanel.findUnique({ where: { id: p.id }, include: { buttons: true } });
           const missing = await findMissingRoles(interaction.guild, withButtons);
           const status = p.messageId ? 'posted' : 'not posted yet';
+          const mode = withButtons.selectionMode === 'multi' ? 'multi' : 'unique';
           const warn = missing.length ? ` ⚠️ ${missing.length} broken button(s)` : '';
-          return `• **${p.internalName}** — ${p.title} (${withButtons.buttons.length} buttons, ${status})${warn}`;
+          return `• **${p.internalName}** — ${p.title} (${withButtons.buttons.length} buttons, ${mode}, ${status})${warn}`;
         })
       );
       await interaction.reply({ content: lines.join('\n'), ephemeral: true });

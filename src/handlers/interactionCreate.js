@@ -697,6 +697,12 @@ async function handleRpWizardButton(interaction) {
     return;
   }
 
+  if (interaction.customId === 'rpwizard_toggle_mode') {
+    draft.selectionMode = draft.selectionMode === 'multi' ? 'unique' : 'multi';
+    await interaction.update({ embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
+    return;
+  }
+
   if (interaction.customId === 'rpwizard_back') {
     draft.pendingButton = null;
     await interaction.update({ content: null, embeds: [rolePanelWizardEmbed(draft)], components: rolePanelWizardRows(draft) });
@@ -810,6 +816,7 @@ async function finishRolePanelWizard(interaction, draft) {
         data: {
           title: draft.title,
           description: draft.description,
+          selectionMode: draft.selectionMode,
           buttons: { create: buttonData },
         },
         include: { buttons: true },
@@ -821,6 +828,7 @@ async function finishRolePanelWizard(interaction, draft) {
           internalName: draft.internalName,
           title: draft.title,
           description: draft.description,
+          selectionMode: draft.selectionMode,
           createdByUserId: draft.createdByUserId,
           buttons: { create: buttonData },
         },

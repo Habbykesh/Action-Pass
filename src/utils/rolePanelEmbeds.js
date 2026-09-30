@@ -36,12 +36,18 @@ function rolePanelWizardEmbed(draft) {
         .join('\n')
     : '_No buttons added yet — add at least 1._';
 
+  const modeText =
+    draft.selectionMode === 'multi'
+      ? 'Multiple — members can hold any combination of this panel\u2019s roles'
+      : 'Unique — picking one swaps out any other role from this panel';
+
   return new EmbedBuilder()
     .setColor(COLOR)
     .setTitle(`🎛️  ${draft.editingPanelId ? 'Editing' : 'Draft'} Role Panel: ${draft.internalName}`)
     .addFields(
       { name: 'Title', value: draft.title || '_Not set yet._' },
       { name: 'Description', value: draft.description || '_Not set yet._' },
+      { name: 'Selection Mode', value: modeText },
       { name: `Buttons (${draft.buttons.length}/25)`, value: buttonLines }
     )
     .setFooter({ text: 'Use the buttons below, then Save. Post it with /role-panel repost.' });
@@ -70,7 +76,12 @@ function rolePanelWizardRows(draft) {
       .setLabel('Remove Button')
       .setEmoji('➖')
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(!hasButtons)
+      .setDisabled(!hasButtons),
+    new ButtonBuilder()
+      .setCustomId('rpwizard_toggle_mode')
+      .setLabel(draft.selectionMode === 'multi' ? 'Mode: Multiple' : 'Mode: Unique')
+      .setEmoji('🔀')
+      .setStyle(ButtonStyle.Secondary)
   );
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
