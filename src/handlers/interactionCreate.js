@@ -390,33 +390,40 @@ function amLogLine({ username, userId, roleId, extra = '' }) {
 async function handleAmVerifyStart(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
 
+  // Acknowledge first, work second — Discord invalidates an interaction
+  // that hasn't been answered within 3 seconds, and the DB read below
+  // can occasionally be slow enough to miss that window.
+  await interaction.deferReply({ ephemeral: true });
+
   const settings = await getSettings();
   if (!settings.verificationRoleId) {
-    await interaction.reply({ embeds: [verificationNotConfiguredEmbed()], ephemeral: true });
+    await interaction.editReply({ embeds: [verificationNotConfiguredEmbed()] });
     return;
   }
 
-  const already = await memberHasRole(interaction.client, interaction.guildId, interaction.user.id, settings.verificationRoleId);
-  if (already) {
-    await interaction.reply({ embeds: [alreadyVerifiedEmbed()], ephemeral: true });
+  if (memberHasRole(interaction.member, settings.verificationRoleId)) {
+    await interaction.editReply({ embeds: [alreadyVerifiedEmbed()] });
     return;
   }
 
   const challenge = generateChallenge(interaction.user.id, interaction.guildId);
-  await interaction.reply({
+  await interaction.editReply({
     embeds: [challengePrompt(challenge)],
     components: challengeComponents(challenge),
-    ephemeral: true,
   });
 }
 
+// finishVerification / retryChallenge are only ever called after the
+// caller has already run interaction.deferUpdate(), so they respond with
+// editReply — calling update() on an already-deferred interaction is
+// what used to throw "Unknown interaction" (10062) here.
 async function finishVerification(interaction, settings) {
   clearChallenge(interaction.user.id, interaction.guildId);
   try {
-    await assignGuildRole(interaction.client, interaction.guildId, interaction.user.id, settings.verificationRoleId, 'Passed visual verification');
+    await assignGuildRole(interaction.member, settings.verificationRoleId, 'Passed visual verification');
   } catch (err) {
     console.error('[amverify] role assignment failed:', err.message);
-    await interaction.update({
+    await interaction.editReply({
       content: '⚠️ You passed verification, but the role couldn’t be assigned (a permissions or role-hierarchy issue). Please contact an admin.',
       embeds: [],
       components: [],
@@ -424,7 +431,7 @@ async function finishVerification(interaction, settings) {
     });
     return;
   }
-  await interaction.update({ embeds: [verifiedSuccessEmbed(settings.verificationRoleId)], components: [], files: [] });
+  await interaction.editReply({ embeds: [verifiedSuccessEmbed(settings.verificationRoleId)], components: [], files: [] });
   await logToGuild(
     interaction.client,
     interaction.guildId,
@@ -435,61 +442,64 @@ async function finishVerification(interaction, settings) {
 
 async function retryChallenge(interaction) {
   const challenge = generateChallenge(interaction.user.id, interaction.guildId);
-  await interaction.update({
+  await interaction.editReply({
     embeds: [challengePrompt(challenge, { wrongAttempt: true })],
     components: challengeComponents(challenge),
     files: [],
   });
 }
 
-async function handleAmChallengePickButton(interaction) {
-  if (!isActionModelGuild(interaction.guildId)) return;
+const CHALLENGE_EXPIRED_PAYLOAD = {
+  content: 'This challenge expired. Click **Verify** again to get a new one.',
+  embeds: [],
+  components: [],
+  files: [],
+};
 
-  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
-  if (!challenge) {
-    await interaction.update({ content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] });
-    return;
-  }
-
-  const index = Number(interaction.customId.replace('amchal_pick_', ''));
-  const picked = challenge.options[index];
-
-  if (!checkAnswer(challenge, picked)) {
+// Shared tail of every challenge-answer handler (button, dropdown, modal):
+// the interaction is already deferred by the caller.
+async function resolveChallengeAnswer(interaction, challenge, submitted) {
+  if (!checkAnswer(challenge, submitted)) {
     await retryChallenge(interaction);
     return;
   }
 
   const settings = await getSettings();
   if (!settings.verificationRoleId) {
-    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
+    await interaction.editReply({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
     return;
   }
   await finishVerification(interaction, settings);
 }
 
-async function handleAmChallengePickSelect(interaction) {
+async function handleAmChallengePickButton(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
+
+  await interaction.deferUpdate();
 
   const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
   if (!challenge) {
-    await interaction.update({ content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] });
+    await interaction.editReply(CHALLENGE_EXPIRED_PAYLOAD);
+    return;
+  }
+
+  const index = Number(interaction.customId.replace('amchal_pick_', ''));
+  await resolveChallengeAnswer(interaction, challenge, challenge.options[index]);
+}
+
+async function handleAmChallengePickSelect(interaction) {
+  if (!isActionModelGuild(interaction.guildId)) return;
+
+  await interaction.deferUpdate();
+
+  const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
+  if (!challenge) {
+    await interaction.editReply(CHALLENGE_EXPIRED_PAYLOAD);
     return;
   }
 
   const index = Number(interaction.values[0]);
-  const picked = challenge.options[index];
-
-  if (!checkAnswer(challenge, picked)) {
-    await retryChallenge(interaction);
-    return;
-  }
-
-  const settings = await getSettings();
-  if (!settings.verificationRoleId) {
-    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
-    return;
-  }
-  await finishVerification(interaction, settings);
+  await resolveChallengeAnswer(interaction, challenge, challenge.options[index]);
 }
 
 async function handleAmChallengeOpenModal(interaction) {
@@ -506,27 +516,18 @@ async function handleAmChallengeOpenModal(interaction) {
 async function handleAmChallengeWordModal(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
 
+  const fromMessage = Boolean(interaction.isFromMessage?.());
+  if (fromMessage) await interaction.deferUpdate();
+  else await interaction.deferReply({ ephemeral: true });
+
   const challenge = getActiveChallenge(interaction.user.id, interaction.guildId);
   if (!challenge) {
-    const payload = { content: 'This challenge expired. Click **Verify** again to get a new one.', embeds: [], components: [], files: [] };
-    if (interaction.isFromMessage?.()) await interaction.update(payload);
-    else await interaction.reply({ ...payload, ephemeral: true });
+    await interaction.editReply(CHALLENGE_EXPIRED_PAYLOAD);
     return;
   }
 
   const submitted = interaction.fields.getTextInputValue('answer').trim();
-
-  if (!checkAnswer(challenge, submitted)) {
-    await retryChallenge(interaction);
-    return;
-  }
-
-  const settings = await getSettings();
-  if (!settings.verificationRoleId) {
-    await interaction.update({ embeds: [verificationNotConfiguredEmbed()], components: [], files: [] });
-    return;
-  }
-  await finishVerification(interaction, settings);
+  await resolveChallengeAnswer(interaction, challenge, submitted);
 }
 
 // ── Action Model: Alpha / Code Gate ─────────────────────────────────
@@ -539,14 +540,15 @@ async function handleAmCodeStart(interaction) {
 async function handleAmCodeModalSubmit(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
 
+  await interaction.deferReply({ ephemeral: true });
+
   const settings = await getSettings();
   if (!settings.campaignRoleId) {
-    await interaction.reply({ embeds: [codeFailEmbed('not_configured')], ephemeral: true });
+    await interaction.editReply({ embeds: [codeFailEmbed('not_configured')] });
     return;
   }
 
   const rawCode = interaction.fields.getTextInputValue('code').trim();
-  await interaction.deferReply({ ephemeral: true });
 
   const result = await redeemCode({
     guildId: interaction.guildId,
@@ -561,7 +563,7 @@ async function handleAmCodeModalSubmit(interaction) {
   }
 
   try {
-    await assignGuildRole(interaction.client, interaction.guildId, interaction.user.id, result.code.roleId, `Redeemed code ${result.code.code}`);
+    await assignGuildRole(interaction.member, result.code.roleId, `Redeemed code ${result.code.code}`);
   } catch (err) {
     console.error('[amcode] role assignment failed, releasing code:', err.message);
     await releaseCode(result.code.id);
@@ -595,9 +597,10 @@ async function handleAmSetupMenu(interaction) {
   await interaction.showModal(textFieldModal(field, settings[field]));
 }
 
+// Callers must have already run interaction.deferUpdate().
 async function refreshSetupSummary(interaction) {
   const settings = await getSettings();
-  await interaction.update({ content: null, embeds: [summaryEmbed(settings)], components: menuRows(settings) });
+  await interaction.editReply({ content: null, embeds: [summaryEmbed(settings)], components: menuRows(settings) });
 }
 
 async function handleAmSetupTextModal(interaction) {
@@ -609,6 +612,7 @@ async function handleAmSetupTextModal(interaction) {
   const raw = interaction.fields.getTextInputValue('value').trim();
   const value = field === 'embedImageUrl' && raw === '' ? null : raw;
 
+  await interaction.deferUpdate();
   await updateSettings({ [field]: value });
   await refreshSetupSummary(interaction);
 }
@@ -617,6 +621,7 @@ async function handleAmSetupRoleSelect(interaction) {
   if (!isActionModelGuild(interaction.guildId)) return;
 
   const role = interaction.roles.first();
+  await interaction.deferUpdate();
   if (interaction.customId === 'amsetup_roleselect_verification') {
     await updateSettings({ verificationRoleId: role.id });
   } else {

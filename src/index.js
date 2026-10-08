@@ -23,7 +23,27 @@ for (const file of fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js'))
 const handlersPath = path.join(__dirname, 'handlers');
 for (const file of fs.readdirSync(handlersPath).filter((f) => f.endsWith('.js'))) {
   const handler = require(path.join(handlersPath, file));
-  client.on(handler.name, (...args) => handler.execute(...args));
+  client.on(handler.name, async (...args) => {
+    try {
+      await handler.execute(...args);
+    } catch (err) {
+      // One failed interaction/event must never take the whole bot down.
+      console.error(`[${handler.name}] Unhandled handler error:`, err);
+
+      const interaction = args[0];
+      // 10062 = the interaction token already expired, so there's
+      // nothing left to reply to.
+      if (handler.name === 'interactionCreate' && err?.code !== 10062 && interaction?.isRepliable?.()) {
+        const payload = { content: '⚠️ Something went wrong. Please try again.', ephemeral: true };
+        try {
+          if (interaction.deferred || interaction.replied) await interaction.followUp(payload);
+          else await interaction.reply(payload);
+        } catch (replyErr) {
+          console.error('[interactionCreate] Could not send error reply:', replyErr.message);
+        }
+      }
+    }
+  });
 }
 
 async function runPeriodicRecheck() {
@@ -54,6 +74,10 @@ async function main() {
 main().catch((err) => {
   console.error('[bot] Fatal startup error:', err);
   process.exit(1);
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[process] Unhandled rejection:', err);
 });
 
 process.on('SIGINT', async () => {
