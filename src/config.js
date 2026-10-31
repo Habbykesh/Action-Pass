@@ -27,6 +27,35 @@ const config = {
   // slash commands are registered globally and default member
   // permissions alone don't restrict a command to a single server.
   actionModelGuildId: requireEnv('ACTION_MODEL_GUILD_ID'),
+
+  // Server & Member Analytics. Every value is optional; the defaults
+  // are what ships.
+  analytics: {
+    // Longest reporting period a command may request.
+    maxPeriodDays: Number(process.env.ANALYTICS_MAX_PERIOD_DAYS || 730),
+
+    // How often in-memory counters are written to Postgres.
+    flushIntervalSeconds: Number(process.env.ANALYTICS_FLUSH_INTERVAL_SECONDS || 30),
+
+    // Backfill: each reaction emoji on a historical message costs one API
+    // call to learn who reacted. This caps those calls per backfill run.
+    backfillMaxReactionFetches: Number(process.env.ANALYTICS_BACKFILL_MAX_REACTION_FETCHES || 5000),
+
+    leaderboardDefaultDays: 30,
+    leaderboardSize: 10,
+
+    // Transparent activity score:
+    //   score = messages × 1 + reactions × 0.5 + voiceMinutes × 0.2
+    weights: { message: 1, reaction: 0.5, voiceMinute: 0.2 },
+
+    // Guilds that get tracking switched on automatically the first time
+    // the bot starts with this feature (only if they have no analytics
+    // config yet, so `!analytics disable` is never overridden).
+    autoEnableGuildIds: [
+      process.env.HOME_GUILD_ID?.trim(),
+      process.env.ACTION_MODEL_GUILD_ID?.trim(),
+    ].filter(Boolean),
+  },
 };
 
 if (config.ownerIds.length === 0) {

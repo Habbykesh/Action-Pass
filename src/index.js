@@ -4,13 +4,19 @@ const { Client, GatewayIntentBits, Collection, Partials } = require('discord.js'
 const config = require('./config');
 const { connectDatabase, prisma } = require('./database/connect');
 const { recheckCampaign } = require('./services/verificationService');
+const { collector: analyticsCollector } = require('./services/analytics/collector');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    // Server & Member Analytics (none of these are privileged):
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
   ],
-  partials: [Partials.GuildMember],
+  // Message/Reaction partials let reactions on uncached messages be counted.
+  partials: [Partials.GuildMember, Partials.Message, Partials.Reaction],
 });
 
 client.commands = new Collection();
@@ -80,8 +86,14 @@ process.on('unhandledRejection', (err) => {
   console.error('[process] Unhandled rejection:', err);
 });
 
-process.on('SIGINT', async () => {
+async function shutdown() {
+  // Persist any not-yet-flushed analytics counters before exiting.
+  await analyticsCollector.shutdown();
   await prisma.$disconnect();
   client.destroy();
   process.exit(0);
-});
+}
+
+process.on('SIGINT', shutdown);
+// Railway stops containers with SIGTERM on every redeploy.
+process.on('SIGTERM', shutdown);

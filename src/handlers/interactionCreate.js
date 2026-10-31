@@ -69,7 +69,7 @@ const {
 // Model-only guild command, so Discord itself won't even show other
 // commands to a partner server. This check is defense-in-depth on top
 // of that, in case registration ever falls out of sync.
-const PARTNER_ALLOWED_COMMANDS = new Set(['link-username', 'campaign-repost']);
+const PARTNER_ALLOWED_COMMANDS = new Set(['link-username', 'campaign-repost', 'analytics']);
 
 async function handleSlashCommand(interaction) {
   const command = interaction.client.commands.get(interaction.commandName);

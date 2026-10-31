@@ -257,3 +257,80 @@ model RolePanelButton {
 
   @@index([panelId])
 }
+
+// ── Server & Member Analytics ───────────────────────────────────────
+// Per-guild activity analytics. Tracking is opt-in per guild
+// (`!analytics enable`) and only ever records data from the moment it
+// is enabled — nothing is back-filled. No message content is stored.
+
+model GuildAnalyticsConfig {
+  guildId String @id
+
+  enabled Boolean @default(true)
+
+  // First moment tracking was enabled for this guild. Reports compare
+  // the requested window against this so partial coverage is flagged
+  // instead of silently showing zeros as if they were real.
+  trackingStartedAt DateTime
+
+  // The most recent pause (disable → re-enable). While disabled,
+  // pausedTo is null.
+  pausedFrom DateTime?
+  pausedTo   DateTime?
+
+  // Earliest moment covered by `!analytics backfill` (messages, joins and
+  // approximate reactions recovered from Discord history). Voice and
+  // leaves are never recoverable, so they still start at trackingStartedAt.
+  backfilledFrom DateTime?
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// Hourly rollup: one row per (guild, hour, member). Counters are
+// batched in memory and upserted, so a busy server produces a bounded
+// number of writes instead of one row per message. `bucket` is the
+// start of the UTC hour.
+model ActivityHourly {
+  guildId String
+  userId  String
+  bucket  DateTime
+
+  messages     Int @default(0)
+  reactions    Int @default(0)
+  voiceJoins   Int @default(0)
+  voiceSeconds Int @default(0)
+
+  @@id([guildId, bucket, userId])
+  @@index([guildId, userId, bucket])
+}
+
+// Member joins/leaves. Low volume, so stored as individual events.
+// The unique key makes a replayed join (same member, same Discord
+// joinedAt) a no-op after a reconnect.
+model ActivityMemberEvent {
+  id         BigInt   @id @default(autoincrement())
+  guildId    String
+  userId     String
+  type       String // "join" | "leave"
+  occurredAt DateTime
+
+  @@unique([guildId, userId, type, occurredAt])
+  @@index([guildId, occurredAt])
+}
+
+// Voice sessions. endedAt is null while the member is still in voice.
+// lastSeenAt is a heartbeat, so after a crash an orphaned session is
+// closed at the last moment the bot actually knew about — never later.
+model ActivityVoiceSession {
+  id        BigInt    @id @default(autoincrement())
+  guildId   String
+  userId    String
+  channelId String
+  startedAt DateTime
+  lastSeenAt DateTime
+  endedAt   DateTime?
+
+  @@index([guildId, userId, endedAt])
+  @@index([guildId, startedAt])
+}

@@ -171,3 +171,30 @@ npx prisma migrate dev --name action-model-alpha-verification-gate
 (on Railway, this applies automatically on the next deploy via
 `prisma migrate deploy`, same as any other schema change).
 
+
+## Server & Member Analytics
+
+Continuous activity tracking plus admin-only reports. Everything is a slash command, so **no privileged Message Content intent is needed**.
+`/analytics` is registered globally (like `/link-username`), so it works in any server the bot is in. No message content is ever stored — only counts and timestamps.
+
+| Command (Administrators only) | What it does |
+|---|---|
+| `/analytics report amount unit [member] [private]` | Server-wide report + chart, or one member's report. e.g. `14 days`, `6 hours`, `2 weeks`, `4 months`, `1 year`. `member` accepts a mention or a pasted user ID. |
+| `/analytics leaderboard [amount] [unit]` | Most active members (default 30 days) |
+| `/analytics backfill amount unit` | Recovers past messages, joins and *approximate* reactions from Discord history (voice and leaves can't be recovered) |
+| `/analytics status` / `enable` / `disable` / `help` | Per-server control |
+
+Tracking is opt-in per server (`/analytics enable`); your home and Action Model servers are switched on automatically the first time.
+
+**Definitions** — *Active user*: non-bot member with ≥1 message, reaction or voice session. *Engagements*: messages + reactions added + voice sessions started (joins/leaves excluded). *Activity score*: messages × 1 + reactions × 0.5 + voice minutes × 0.2. Breakdown percentages total exactly 100%. Months/years are UTC calendar periods; max period defaults to 730 days.
+
+**Setup**
+1. No new privileged intents. The bot now also uses the normal *Guild Messages*, *Guild Message Reactions* and *Guild Voice States* intents (nothing to enable in the portal).
+2. Deploy as usual — `prisma migrate deploy` applies the two analytics migrations.
+3. Run `npm run deploy-commands` once so `/analytics` is registered.
+4. Give the bot **View Channel + Read Message History** on channels you want backfilled.
+5. In other servers an admin runs `/analytics enable`, then optionally `/analytics backfill`.
+
+Optional env vars: `ANALYTICS_MAX_PERIOD_DAYS`, `ANALYTICS_FLUSH_INTERVAL_SECONDS`, `ANALYTICS_BACKFILL_MAX_REACTION_FETCHES` (default 5000).
+
+Tests: `npm test` (database tests need `TEST_DATABASE_URL` pointing at an empty scratch Postgres).
